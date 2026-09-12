@@ -29,6 +29,10 @@ Serve `public/` at `/mine/` and allowlisted modules from `src/` at `/mine/src/`.
 The website origin is `https://pool.zclthesis.com`; Caddy terminates TLS and
 proxies `/ws` to `127.0.0.1:8787`. The supplied systemd service runs as the
 unprivileged `zclpool` user. See the pool repository's `deploy/zcl/Caddyfile`.
+Caddy must replace the forwarded client address using
+`header_up X-Forwarded-For {http.request.remote.host}`. The loopback bridge
+accepts a single IP address, rejects forwarded chains, and includes pending
+handshakes in its connection limits.
 
 The bridge connects only to `127.0.0.1:2192`. It validates the address checksum,
 subscribes and authorizes that address, and accepts only bounded canonical
@@ -105,13 +109,18 @@ GPU-generated test results saved by `tests/run-browser-test.mjs`.
 
 Validation so far on Chrome / Apple Metal 3:
 
-- Host tests: 11 passed, including the mainnet fixture and mutation rejection.
+- Automated tests: 26 passed, including proof verification, worker stop/restart,
+  malformed submissions, launch gates, connection limits and address binding.
 - All six GPU Blake2b vectors passed.
 - A real 96,5 proof was generated and independently accepted by Python hashlib.
 - Forced 64 KiB storage chunking generated another independently valid 96,5 proof.
 - Full 192,7 historical-header recomputation returned three independently valid
   proofs, including the original mainnet proof, in a single 5.76-second run.
 - Aborting a GPU run and restarting the same solver passed a bounded 96,5 test.
+- The pool's production C++/libsodium verifier accepted all three historical
+  WebGPU proofs on Ubuntu with ASan/UBSan, and rejected nine mutations. The
+  [native regression](https://github.com/netzo92/zclthesis-pool/tree/97e5490/stratum/tests/fixtures)
+  records the fixture and reproducible command.
 - End-to-end acceptance through the live pool remains untested. The timing above
   is one correctness run, not a sustained speed or profitability benchmark.
 

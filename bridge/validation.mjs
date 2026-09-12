@@ -10,7 +10,7 @@ export function isZclAddress(address) {
 }
 export function validSubmit(message,jobs) {
   return message&&message.type==='submit'&&Number.isSafeInteger(message.id)&&message.id>=0&&message.id<=2**31&&
-    typeof message.job==='string'&&jobs.has(message.job)&&/^[0-9a-f]{8}$/i.test(message.time)&&
-    typeof message.time==='string'&&typeof message.nonce==='string'&&/^[0-9a-f]{56}$/i.test(message.nonce)&&
+    typeof message.job==='string'&&jobs.has(message.job)&&typeof message.time==='string'&&
+    /^[0-9a-f]{8}$/i.test(message.time)&&typeof message.nonce==='string'&&/^[0-9a-f]{56}$/i.test(message.nonce)&&
     typeof message.solution==='string'&&/^fd9001[0-9a-f]{800}$/i.test(message.solution);
 }

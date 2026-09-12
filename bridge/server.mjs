@@ -16,27 +16,41 @@ const testAddress=process.env.ZCL_TEST_PAYOUT_ADDRESS;
 const server=http.createServer((_req,res)=>{res.writeHead(404);res.end();});
 const wss=new WebSocketServer({noServer:true,maxPayload:2048,perMessageDeflate:false});
 const peers=new Map();
+let pendingUpgrades=0;
 server.on('upgrade',async(req,socket,head)=>{
-  const ip=req.socket.remoteAddress+'|'+String(req.headers['x-forwarded-for']||'').slice(0,100);
-  if(req.url!=='/ws'||!origins.has(req.headers.origin)||wss.clients.size>=64||(peers.get(ip)||0)>=4){socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');return;}
+  // Caddy must replace X-Forwarded-For with {http.request.remote.host}.
+  // Reject chains and arbitrary strings rather than letting them split limits.
+  const forwarded=req.headers['x-forwarded-for'];
+  const onSocketError=()=>socket.destroy();socket.on('error',onSocketError);
+  if(forwarded!==undefined&&(typeof forwarded!=='string'||!net.isIP(forwarded))){socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');return;}
+  const ip=forwarded||req.socket.remoteAddress;
+  if(req.url!=='/ws'||!origins.has(req.headers.origin)||wss.clients.size+pendingUpgrades>=64||(peers.get(ip)||0)>=4){socket.end('HTTP/1.1 403 Forbidden\r\nConnection: close\r\n\r\n');return;}
+  // Reserve before awaiting disk I/O. Aborted/invalid handshakes also release
+  // their reservation, so they cannot permanently consume a visitor's limit.
+  ++pendingUpgrades;peers.set(ip,(peers.get(ip)||0)+1);
+  let released=false;
+  const release=()=>{if(released)return;released=true;const count=(peers.get(ip)||1)-1;if(count)peers.set(ip,count);else peers.delete(ip);};
+  socket.once('close',release);
   let testingOnly=false;
   try {
     const status=JSON.parse(await readFile(statusPath,'utf8')),age=Date.now()-Date.parse(status.generatedAt);
     if(status.node?.synced!==true||!Number.isFinite(age)||age>180000||age < -300000)throw new Error();
     let pool;try{pool=JSON.parse(await readFile(poolStatusPath,'utf8'));}catch{}
     if(pool?.acceptingMiners!==true||pool?.feePercent!==0.8){if(!isZclAddress(testAddress))throw new Error();testingOnly=true;}
+    if(socket.destroyed)return;
+    wss.handleUpgrade(req,socket,head,ws=>{
+      socket.removeListener('error',onSocketError);socket.removeListener('close',release);
+      ws.testingOnly=testingOnly;ws.once('close',release);wss.emit('connection',ws);
+    });
   }
-  catch {socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');return;}
-  // Recheck after asynchronous disk access to keep concurrent upgrade limits exact.
-  if(wss.clients.size>=64||(peers.get(ip)||0)>=4){socket.destroy();return;}
-  peers.set(ip,(peers.get(ip)||0)+1);
-  wss.handleUpgrade(req,socket,head,ws=>{ws.testingOnly=testingOnly;ws.once('close',()=>{const count=(peers.get(ip)||1)-1;if(count)peers.set(ip,count);else peers.delete(ip);});wss.emit('connection',ws);});
+  catch {if(!socket.destroyed)socket.end('HTTP/1.1 503 Service Unavailable\r\nConnection: close\r\n\r\n');}
+  finally {--pendingUpgrades;}
 });
 wss.on('connection',ws=>{
-  let upstream,address,authorized=false,buffer='',sequence=10,last=Date.now(),tokens=12;
+  let upstream,address,authorized=false,failed=false,buffer='',sequence=10,last=Date.now(),tokens=12;
   const jobs=new Map(),pending=new Map();
   const send=value=>{if(ws.readyState===WebSocket.OPEN){if(ws.bufferedAmount>65536){ws.terminate();return;}ws.send(JSON.stringify(value));}};
-  const fail=message=>{send({type:'error',message});ws.close(1008,'Mining session ended');};
+  const fail=message=>{if(failed)return;failed=true;send({type:'error',message});upstream?.destroy();ws.close(1008,'Mining session ended');};
   const rpc=(id,method,params)=>upstream.write(JSON.stringify({id,method,params})+'\n');
   const helloTimeout=setTimeout(()=>fail('Mining address was not supplied.'),10000);
   const lifetime=setTimeout(()=>fail('Session finished. Start a new session to continue.'),61*60*1000);
@@ -46,6 +60,7 @@ wss.on('connection',ws=>{
   ws.on('error',()=>{});
   ws.on('close',()=>{clearTimeout(helloTimeout);clearTimeout(lifetime);clearInterval(heartbeat);upstream?.destroy();});
   ws.on('message',(raw,binary)=>{
+    if(failed||ws.readyState!==WebSocket.OPEN)return;
     const now=Date.now();tokens=Math.min(12,tokens+(now-last)/1000);last=now;
     if(binary||--tokens<0){fail('Too many messages.');return;}
     let message;try{message=JSON.parse(raw.toString());}catch{fail('Invalid message.');return;}
