@@ -50,6 +50,8 @@ observations fail closed, including for private tests. A private
 public address to test a synced pool before general admission; never commit
 operator configuration. Tests may override the status paths and ports to use
 isolated mock services. They do not mine or send money.
+The English and Spanish Start controls apply the same freshness bounds before
+allowing a visitor to begin a session.
 
 ## Solver API
 
@@ -111,7 +113,7 @@ GPU-generated test results saved by `tests/run-browser-test.mjs`.
 
 Validation so far on Chrome / Apple Metal 3:
 
-- Automated tests: 27 passed, including proof verification, worker stop/restart,
+- Automated tests: 28 passed, including proof verification, worker stop/restart,
   malformed submissions, launch gates, connection limits and address binding.
 - All six GPU Blake2b vectors passed.
 - A real 96,5 proof was generated and independently accepted by Python hashlib.

@@ -19,8 +19,11 @@ async function checkPool(){
     const [poolResponse,nodeResponse]=await Promise.all([fetch('/api/pool.json',{cache:'no-store'}),fetch('/api/node.json',{cache:'no-store'})]);
     if(!poolResponse.ok||!nodeResponse.ok)throw new Error();
     const [pool,node]=await Promise.all([poolResponse.json(),nodeResponse.json()]);
-    const age=Date.now()-Date.parse(node.generatedAt);
-    poolOpen=pool.acceptingMiners===true&&pool.feePercent===0.8&&node.asset==='ZCL'&&node.node?.synced===true&&Number.isFinite(age)&&age>=-300000&&age<=180000;
+    const now=Date.now(),fresh=[pool.generatedAt,node.generatedAt].every(value=>{
+      const age=now-Date.parse(value);
+      return typeof value==='string'&&Number.isFinite(age)&&age>=-300000&&age<=180000;
+    });
+    poolOpen=pool.acceptingMiners===true&&pool.feePercent===0.8&&node.asset==='ZCL'&&node.node?.synced===true&&fresh;
     $('pool-readiness').textContent=poolOpen?(es?'El pool está listo para aceptar mineros.':'The pool is ready to accept miners.'):(es?'El pool está completando sus comprobaciones de lanzamiento y la sincronización. La minería aún no está abierta.':'The pool is completing launch checks and synchronization. Mining is not open yet.');
   }catch{poolOpen=false;$('pool-readiness').textContent=es?'El estado del pool no está disponible. Espera a que se confirme antes de empezar.':'Pool status is unavailable. Wait for readiness to be confirmed before starting.';}
   if(!worker)$('start').disabled=!poolOpen;
