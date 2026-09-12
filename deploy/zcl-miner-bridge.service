@@ -1,0 +1,28 @@
+[Unit]
+Description=Restricted browser transport for the ZCL mining pool
+After=network.target
+
+[Service]
+Type=simple
+User=zclpool
+Group=zclpool
+WorkingDirectory=/opt/zcl-pool/webminer
+Environment=NODE_ENV=production
+Environment=ZCL_BRIDGE_PORT=8787
+Environment=ZCL_STRATUM_PORT=2192
+Environment=ZCL_MINER_ORIGINS=https://pool.zclthesis.com
+ExecStart=/usr/bin/node /opt/zcl-pool/webminer/bridge/server.mjs
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+PrivateDevices=true
+RestrictAddressFamilies=AF_INET AF_INET6 AF_UNIX
+CapabilityBoundingSet=
+MemoryMax=128M
+TasksMax=32
+
+[Install]
+WantedBy=multi-user.target

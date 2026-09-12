@@ -1,9 +1,51 @@
-# ZCL browser solver core
+# ZCL Thesis browser miner
 
 This repository implements an experimental **WebGPU Equihash 192,7 solver**
 for Zclassic's `ZcashPoW` personalization. It performs the actual Blake2b and
-collision search on the visitor's GPU. It has no pool connection, wallet key,
-automatic startup, or payout destination of its own.
+collision search on the visitor's GPU. The bilingual interface starts only after
+the visitor supplies a public ZCL address, chooses a time limit, acknowledges
+GPU/electricity use, and presses Start. Hiding the tab or pressing Stop terminates
+the worker. No private key or deposit is required.
+
+The interface connects through a restricted WebSocket bridge to our fixed local
+Stratum server. It does not expose node RPC or accept arbitrary proxy targets.
+The solver core itself has no network connection or payout destination.
+
+**Launch status:** implementation and correctness testing are in progress.
+Historical GPU proof generation and isolated transport tests have passed;
+this document does not yet claim accepted live pool shares or mainnet payouts.
+
+## Pool transport and deployment
+
+```sh
+npm ci --ignore-scripts
+npm test
+node scripts/preview.mjs   # Static localhost preview, no mining auto-start
+# The production bridge is installed on the CPU-only pool host:
+npm run bridge
+```
+
+Serve `public/` at `/mine/` and allowlisted modules from `src/` at `/mine/src/`.
+The website origin is `https://pool.zclthesis.com`; Caddy terminates TLS and
+proxies `/ws` to `127.0.0.1:8787`. The supplied systemd service runs as the
+unprivileged `zclpool` user. See the pool repository's `deploy/zcl/Caddyfile`.
+
+The bridge connects only to `127.0.0.1:2192`. It validates the address checksum,
+subscribes and authorizes that address, and accepts only bounded canonical
+400-byte solutions for recent jobs from that connection. It applies frame,
+connection, per-peer, rate, queue, and session limits. It never handles payouts;
+the separate pool ledger allocates 99.2% of round rewards to participating miners
+and 0.8% to the operator, with a 0.05 ZCL miner payout threshold.
+
+Admission requires a fresh synced `/var/lib/zcl-public/api/node.json` and a
+`/var/lib/zcl-public/api/pool.json` with `acceptingMiners: true` and
+`feePercent: 0.8`. Unavailable or incomplete launch state fails closed. A private
+`ZCL_TEST_PAYOUT_ADDRESS` deployment setting permits only the explicitly named
+public address to test a synced pool before general admission; never commit
+operator configuration. Tests may override the status paths and ports to use
+isolated mock services. They do not mine or send money.
+
+## Solver API
 
 ```js
 import {createSolver, preferredLimits} from './src/solver.mjs';
