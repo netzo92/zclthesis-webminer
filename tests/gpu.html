@@ -1,0 +1,81 @@
+<!doctype html>
+<html lang="en"><meta charset="utf-8"><title>ZCL solver correctness tests</title>
+<style>body{font:16px system-ui;max-width:900px;margin:40px auto;padding:0 20px}button{padding:12px;margin:8px}pre{white-space:pre-wrap}</style>
+<h1>Opt-in GPU correctness tests</h1>
+<p>Nothing runs automatically. These finite tests use synthetic headers and never connect to a wallet or mining pool.</p>
+<button id="hashes">Run known Blake2b vectors</button>
+<button id="reduced">Run reduced 96,5 solver test (8 MiB)</button>
+<button id="chunked">Run forced chunking test (96,5; 8 MiB)</button>
+<button id="abort">Test stop and restart (96,5; 8 MiB)</button>
+<button id="historical">Recompute one historical 192,7 header (3.26 GiB)</button>
+<button id="stop">Stop</button>
+<pre id="result">Idle.</pre>
+<script type="module">
+import {createSolver,testGpuHashes,preferredLimits,verifyProof} from '../src/solver.mjs';
+const output=document.querySelector('#result');
+let controller;
+window.testResults={status:'idle'};
+document.querySelector('#stop').onclick=()=>controller?.abort();
+async function run(kind) {
+  if(window.testResults.status==='running') return;
+  controller=new AbortController(); window.testResults={status:'running',kind};
+  output.textContent='Requesting WebGPU adapter…';
+  let device,solver;
+  try {
+    if(!navigator.gpu) throw new Error('WebGPU unavailable in this browser.');
+    const adapter=await navigator.gpu.requestAdapter({powerPreference:'high-performance'});
+    if(!adapter) throw new Error('No WebGPU adapter.');
+    device=await adapter.requestDevice({requiredLimits:preferredLimits(adapter.limits)});
+    const info={vendor:adapter.info?.vendor,architecture:adapter.info?.architecture,description:adapter.info?.description};
+    window.testResults.adapter=info;
+    const vectors=(await(await fetch('./blake-vectors.json')).json()).vectors;
+    if(kind==='hashes') {
+      for(const v of vectors) {
+        const header=Uint8Array.from(v.header.match(/../g),x=>parseInt(x,16));
+        const got=await testGpuHashes(device,header,{n:v.n,k:v.k,start:v.group});
+        const hex=Array.from(got,x=>x.toString(16).padStart(2,'0')).join('');
+        if(hex!==v.digest) throw new Error(`GPU Blake2b mismatch for ${v.n},${v.k} group ${v.group}: ${hex}`);
+      }
+      window.testResults={status:'passed',kind,adapter:info,vectors:vectors.length};
+    } else if(kind==='historical') {
+      const fixture=await(await fetch('./zcl-mainnet-header.json')).json();
+      const raw=Uint8Array.from(fixture.header_hex.match(/../g),x=>parseInt(x,16));
+      solver=await createSolver(device);
+      const started=performance.now();
+      const found=await solver.solve(raw.slice(0,140),{signal:controller.signal,onProgress:p=>{output.textContent=JSON.stringify(p);window.lastProgress=p;}});
+      const proofs=found.map(proof=>({header:Array.from(raw.slice(0,140)),proof:Array.from(proof)}));
+      if(!proofs.length) throw new Error('No proof recovered for the fixed historical header; result inconclusive.');
+      window.testResults={status:'passed',kind,adapter:info,seconds:(performance.now()-started)/1000,proofs};
+    } else {
+      solver=await createSolver(device,{n:96,k:5,...(kind==='chunked'?{chunkBytes:65536}:{})});
+      if(kind==='abort') {
+        const cancelled=new AbortController(); let stopped=false;
+        try {
+          await solver.solve(new Uint8Array(140),{signal:cancelled.signal,onProgress:()=>cancelled.abort()});
+        } catch(error) { if(error.name==='AbortError') stopped=true; else throw error; }
+        if(!stopped) throw new Error('Stop signal was ignored.');
+      }
+      const proofs=[];
+      for(let attempt=0;attempt<8&&!proofs.length;attempt++) {
+        const header=new Uint8Array(140); new DataView(header.buffer).setUint32(128,attempt,true);
+        const found=await solver.solve(header,{signal:controller.signal,onProgress:p=>{output.textContent=JSON.stringify(p);window.lastProgress=p;}});
+        for(const proof of found) {
+          if(!verifyProof(header,proof,96,5)) throw new Error('Invalid GPU proof.');
+          proofs.push({header:Array.from(header),proof:Array.from(proof)});
+        }
+      }
+      if(!proofs.length) throw new Error('No proof found in eight finite reduced-parameter attempts; test inconclusive.');
+      window.testResults={status:'passed',kind,adapter:info,proofs};
+    }
+    output.textContent=JSON.stringify(window.testResults,null,2);
+  } catch(error) {
+    window.testResults={status:'failed',kind,error:String(error),stack:error.stack};
+    output.textContent=JSON.stringify(window.testResults,null,2);
+  } finally { solver?.dispose(); device?.destroy(); }
+}
+document.querySelector('#hashes').onclick=()=>run('hashes');
+document.querySelector('#reduced').onclick=()=>run('reduced');
+document.querySelector('#chunked').onclick=()=>run('chunked');
+document.querySelector('#abort').onclick=()=>run('abort');
+document.querySelector('#historical').onclick=()=>run('historical');
+</script></html>
