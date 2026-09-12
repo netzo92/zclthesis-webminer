@@ -7,10 +7,18 @@ import os from 'node:os';
 import path from 'node:path';
 import {once} from 'node:events';
 import WebSocket from 'ws';
-import {validSubmit} from '../bridge/validation.mjs';
+import {isFreshTimestamp,validSubmit} from '../bridge/validation.mjs';
 const address='t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs'; // Public test key only.
 const params=['1','04000000','11'.repeat(32),'22'.repeat(32),'00'.repeat(32),'01020304','ffff001f',true,'192_7','ZcashPoW'];
 const fresh=()=>({generatedAt:new Date().toISOString(),node:{synced:true}});
+const freshPool=()=>({generatedAt:new Date().toISOString(),acceptingMiners:true,feePercent:0.8});
+
+test('status freshness uses finite timestamps with exact three-minute age and five-minute future bounds',()=>{
+  const now=Date.parse('2026-09-12T12:00:00Z');
+  for(const offset of [-180000,0,300000])assert.equal(isFreshTimestamp(new Date(now+offset).toISOString(),now),true);
+  for(const offset of [-180001,300001])assert.equal(isFreshTimestamp(new Date(now+offset).toISOString(),now),false);
+  for(const value of [undefined,null,0,{},[],'','invalid'])assert.equal(isFreshTimestamp(value,now),false);
+});
 
 test('JSON objects in every submit field are rejected without primitive coercion',()=>{
   const good={type:'submit',id:1,job:'1',time:'01020304',nonce:'00'.repeat(28),solution:'fd9001'+'00'.repeat(400)};
@@ -25,7 +33,7 @@ test('bridge rejects closed/stale/foreign-origin launches and survives malformed
   const status=path.join(dir,'node.json'),poolStatus=path.join(dir,'pool.json');
   const saveNode=value=>writeFile(status,JSON.stringify(value));
   const savePool=value=>writeFile(poolStatus,JSON.stringify(value));
-  await saveNode(fresh());await savePool({acceptingMiners:true,feePercent:0.8});
+  await saveNode(fresh());await savePool(freshPool());
   let connections=0;const received=[],tcpSockets=new Set();
   const upstream=net.createServer(socket=>{
     connections++;tcpSockets.add(socket);socket.on('close',()=>tcpSockets.delete(socket));socket.on('error',()=>{});
@@ -68,9 +76,14 @@ test('bridge rejects closed/stale/foreign-origin launches and survives malformed
   }
   await denied(403,'https://foreign.example');
   await denied(403,undefined,{'x-forwarded-for':'1.2.3.4, 5.6.7.8'});
-  await savePool({acceptingMiners:false,feePercent:0.8});await denied(503);
-  await savePool({acceptingMiners:true,feePercent:1});await denied(503);
-  await savePool({acceptingMiners:true,feePercent:0.8});
+  await savePool({...freshPool(),acceptingMiners:false});await denied(503);
+  await savePool({...freshPool(),feePercent:1});await denied(503);
+  // A fresh node must not make stale, missing or future-dated pool flags valid.
+  for(const generatedAt of [undefined,null,'invalid',new Date(Date.now()-181000).toISOString(),new Date(Date.now()+301000).toISOString()]) {
+    await savePool({...freshPool(),generatedAt});await denied(503);
+  }
+  await rm(poolStatus);await denied(503);
+  await savePool(freshPool());
   for(const generatedAt of ['invalid',new Date(Date.now()-181000).toISOString(),new Date(Date.now()+301000).toISOString()]) {
     await saveNode({generatedAt,node:{synced:true}});await denied(503);
   }

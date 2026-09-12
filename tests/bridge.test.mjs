@@ -14,7 +14,7 @@ const params=['1',hex(0,4),hex(4,36),hex(36,68),hex(68,100),hex(100,104),hex(104
 test('restricted bridge authorizes the visitor address, transports canonical shares, and rejects proxy/control injection',async t=>{
   const dir=await mkdtemp(path.join(os.tmpdir(),'zcl-bridge-test-'));
   const status=path.join(dir,'node.json');await writeFile(status,JSON.stringify({generatedAt:new Date().toISOString(),node:{synced:true}}));
-  const poolStatus=path.join(dir,'pool.json');await writeFile(poolStatus,JSON.stringify({acceptingMiners:true,feePercent:0.8}));
+  const poolStatus=path.join(dir,'pool.json');await writeFile(poolStatus,JSON.stringify({generatedAt:new Date().toISOString(),acceptingMiners:true,feePercent:0.8}));
   const received=[];let connections=0;
   const upstream=net.createServer(socket=>{connections++;let buffer='';socket.on('data',chunk=>{buffer+=chunk;let index;while((index=buffer.indexOf('\n'))>=0){const message=JSON.parse(buffer.slice(0,index));buffer=buffer.slice(index+1);received.push(message);
     if(message.method==='mining.subscribe')socket.write(JSON.stringify({id:message.id,result:[null,hex(108,112)],error:null})+'\n');

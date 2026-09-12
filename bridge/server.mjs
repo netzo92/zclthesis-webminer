@@ -2,7 +2,7 @@ import http from 'node:http';
 import net from 'node:net';
 import {readFile} from 'node:fs/promises';
 import {WebSocketServer,WebSocket} from 'ws';
-import {isZclAddress,validSubmit} from './validation.mjs';
+import {isFreshTimestamp,isZclAddress,validSubmit} from './validation.mjs';
 import {parseJob} from '../src/protocol.mjs';
 
 // This is a restricted mining transport, with one fixed localhost Stratum upstream.
@@ -33,9 +33,12 @@ server.on('upgrade',async(req,socket,head)=>{
   socket.once('close',release);
   let testingOnly=false;
   try {
-    const status=JSON.parse(await readFile(statusPath,'utf8')),age=Date.now()-Date.parse(status.generatedAt);
-    if(status.node?.synced!==true||!Number.isFinite(age)||age>180000||age < -300000)throw new Error();
-    let pool;try{pool=JSON.parse(await readFile(poolStatusPath,'utf8'));}catch{}
+    const status=JSON.parse(await readFile(statusPath,'utf8'));
+    if(status.node?.synced!==true||!isFreshTimestamp(status.generatedAt))throw new Error();
+    const pool=JSON.parse(await readFile(poolStatusPath,'utf8'));
+    // Fresh observations are required even for the explicitly allowlisted
+    // private test address. A stale acceptance flag cannot open admission.
+    if(!isFreshTimestamp(pool?.generatedAt))throw new Error();
     if(pool?.acceptingMiners!==true||pool?.feePercent!==0.8){if(!isZclAddress(testAddress))throw new Error();testingOnly=true;}
     if(socket.destroyed)return;
     wss.handleUpgrade(req,socket,head,ws=>{

@@ -1,5 +1,10 @@
 import {createHash,timingSafeEqual} from 'node:crypto';
 const alphabet='123456789ABCDEFGHJKLMNPQRSTUVWXYZabcdefghijkmnopqrstuvwxyz';
+export function isFreshTimestamp(value,now=Date.now()) {
+  if(typeof value!=='string')return false;
+  const age=now-Date.parse(value);
+  return Number.isFinite(age)&&age<=180000&&age>=-300000;
+}
 export function isZclAddress(address) {
   if(typeof address!=='string'||address.length!==35||!address.startsWith('t1'))return false;
   let value=0n;for(const c of address){const digit=alphabet.indexOf(c);if(digit<0)return false;value=value*58n+BigInt(digit);}
