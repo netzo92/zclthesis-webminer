@@ -1,5 +1,5 @@
 const es=document.documentElement.lang==='es',$=id=>document.getElementById(id);
-let worker,ticker,started,stopping=false;
+let worker,ticker,started,stopping=false,poolOpen=false;
 const counts={solutions:0,submitted:0,accepted:0,rejected:0};
 const status=text=>$('status').textContent=text;
 const messages={
@@ -13,13 +13,25 @@ const messages={
   'The mining pool is unavailable.':'El pool de minería no está disponible.'
 };
 function text(message){return es?(messages[message]||'La minería se detuvo por un error técnico. Consulta el estado del pool y comprueba que tu navegador y GPU sean compatibles.'):message;}
-function finish(){clearInterval(ticker);worker?.terminate();worker=undefined;$('start').disabled=false;$('stop').disabled=true;$('address').disabled=false;$('minutes').disabled=false;$('progress').value=0;}
+function finish(){clearInterval(ticker);worker?.terminate();worker=undefined;$('start').disabled=!poolOpen;$('stop').disabled=true;$('address').disabled=false;$('minutes').disabled=false;$('progress').value=0;}
+async function checkPool(){
+  try{
+    const [poolResponse,nodeResponse]=await Promise.all([fetch('/api/pool.json',{cache:'no-store'}),fetch('/api/node.json',{cache:'no-store'})]);
+    if(!poolResponse.ok||!nodeResponse.ok)throw new Error();
+    const [pool,node]=await Promise.all([poolResponse.json(),nodeResponse.json()]);
+    const age=Date.now()-Date.parse(node.generatedAt);
+    poolOpen=pool.acceptingMiners===true&&pool.feePercent===0.8&&node.asset==='ZCL'&&node.node?.synced===true&&Number.isFinite(age)&&age>=-300000&&age<=180000;
+    $('pool-readiness').textContent=poolOpen?(es?'El pool está listo para aceptar mineros.':'The pool is ready to accept miners.'):(es?'El pool está completando sus comprobaciones de lanzamiento y la sincronización. La minería aún no está abierta.':'The pool is completing launch checks and synchronization. Mining is not open yet.');
+  }catch{poolOpen=false;$('pool-readiness').textContent=es?'El estado del pool no está disponible. Espera a que se confirme antes de empezar.':'Pool status is unavailable. Wait for readiness to be confirmed before starting.';}
+  if(!worker)$('start').disabled=!poolOpen;
+}
+checkPool();setInterval(()=>{if(!document.hidden)checkPool();},30000);
 function stop(message){if(!worker)return;stopping=true;worker.postMessage({type:'stop'});status(message);finish();}
 $('stop').addEventListener('click',()=>stop(es?'Detenido. Tu GPU no está minando.':'Stopped. Your GPU is not mining.'));
 document.addEventListener('visibilitychange',()=>{if(document.hidden)stop(es?'Pestaña oculta: minería detenida.':'Tab hidden: mining stopped.');});
 window.addEventListener('pagehide',()=>{worker?.terminate();});
 $('mining-form').addEventListener('submit',event=>{
-  event.preventDefault();if(worker||!$('consent').checked)return;
+  event.preventDefault();if(worker||!poolOpen||!$('consent').checked)return;
   const address=$('address').value.trim();if(!/^t1[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)){status(es?'Introduce una dirección transparente ZCL válida.':'Enter a valid ZCL transparent address.');return;}
   if(!navigator.gpu){status(text('This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.'));return;}
   stopping=false;for(const key in counts){counts[key]=0;$(key).textContent='0';}
