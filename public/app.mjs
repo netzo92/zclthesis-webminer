@@ -8,8 +8,10 @@ const messages={
   'Pool disconnected; mining stopped':'Pool desconectado; minería detenida',
   'This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.':'Este navegador no admite WebGPU. Prueba Chrome o Edge actuales con aceleración por hardware.',
   'Pool connection unavailable. Check the pool synchronization status.':'Conexión al pool no disponible. Comprueba el estado de sincronización del pool.',
+  'Pool authorization timed out.':'Se agotó el tiempo de espera para la autorización del pool.',
   'No compatible hardware GPU is available.':'No hay una GPU compatible disponible.',
   'Enter a valid ZCL transparent address.':'Introduce una dirección transparente ZCL válida.',
+  'Choose a session from 1 to 60 minutes, or Until I stop.':'Elige una sesión de 1 a 60 minutos, o Hasta que la detenga.',
   'The mining pool is unavailable.':'El pool de minería no está disponible.'
 };
 function text(message){return es?(messages[message]||'La minería se detuvo por un error técnico. Consulta el estado del pool y comprueba que tu navegador y GPU sean compatibles.'):message;}
@@ -41,7 +43,7 @@ $('mining-form').addEventListener('submit',event=>{
   $('address-line').textContent=(es?'Dirección de pago: ':'Payout address: ')+address;
   started=Date.now();$('elapsed').textContent='0:00';ticker=setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);$('elapsed').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');},1000);
   $('start').disabled=true;$('stop').disabled=false;$('address').disabled=true;$('minutes').disabled=true;
-  worker=new Worker('/mine/src/miner-worker.mjs',{type:'module'});
+  worker=new Worker('/mine/src/miner-worker.mjs?v=20260912-unlimited',{type:'module'});
   worker.onerror=()=>{status(es?'Error del minero; minería detenida.':'Miner error; mining stopped.');finish();};
   worker.onmessage=({data})=>{
     if(data.type==='error'){status(text(data.message));stopping=true;finish();}
@@ -55,5 +57,6 @@ $('mining-form').addEventListener('submit',event=>{
     else if(data.type==='submitted'){$('submitted').textContent=++counts.submitted;}
     else if(data.type==='share'){const key=data.accepted?'accepted':'rejected';$(key).textContent=++counts[key];}
   };
-  worker.postMessage({type:'start',address,minutes:Number($('minutes').value),endpoint:'wss://pool.zclthesis.com/ws'});
+  const duration=$('minutes').value;
+  worker.postMessage({type:'start',address,minutes:duration==='unlimited'?'unlimited':Number(duration),endpoint:'wss://pool.zclthesis.com/ws'});
 });

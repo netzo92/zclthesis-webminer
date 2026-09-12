@@ -34,8 +34,8 @@ function harness(overrides={}) {
     crypto:{getRandomValues:bytes=>bytes.fill(7)},meetsTarget:async()=>true,
     now:()=>now,performanceNow:()=>now,
     setTimeout:fn=>{timers.add(fn);return fn;},clearTimeout:fn=>timers.delete(fn),...overrides});
-  async function connect(complete=true) {
-    await controller(start);const socket=sockets.at(-1);socket.open();
+  async function connect(complete=true,request=start) {
+    await controller(request);const socket=sockets.at(-1);socket.open();
     socket.receive({type:'session',noncePrefix:'00000000'});
     if(complete) authorize(socket);
     await tick();return socket;
@@ -120,6 +120,40 @@ test('session deadline is checked after solving even if the timer is delayed',as
   h.finish(h.solves[0],[new Uint8Array(400)]);await tick();
   assert.equal(socket.sent.filter(x=>x.type==='submit').length,0);
   assert.equal(h.devices[0].destroyed,1);assert.equal(h.timers.size,0);
+});
+
+test('an explicitly unlimited session keeps submitting beyond an hour and a month until Stop',async()=>{
+  const h=harness(),socket=await h.connect(true,{...start,minutes:'unlimited'});
+  assert.equal(h.timers.size,0,'unlimited sessions must not schedule a timeout');
+  for(const elapsed of [62*60000,31*24*60*60000]) {
+    h.advance(elapsed);
+    h.finish(h.solves.at(-1),[new Uint8Array(400)]);await tick();
+    assert.equal(socket.readyState,1);assert.equal(h.devices[0].destroyed,0);
+  }
+  assert.equal(socket.sent.filter(x=>x.type==='submit').length,2);
+  assert.equal(h.solves.length,3,'new work continues after each completed solve');
+  await h.controller({type:'stop'});
+  assert.equal(h.solves.at(-1).signal.aborted,true);
+  assert.equal(socket.readyState,3);assert.equal(h.solvers[0].disposed,1);
+  assert.equal(h.devices[0].destroyed,1);assert.equal(h.timers.size,0);
+  assert.equal(h.messages.filter(x=>x.type==='stopped').length,1);
+});
+
+test('an unlimited session releases its GPU on disconnection and never reconnects itself',async()=>{
+  const h=harness(),socket=await h.connect(true,{...start,minutes:'unlimited'});
+  h.advance(62*60000);socket.close();await tick();
+  assert.equal(h.solves[0].signal.aborted,true);assert.equal(h.solvers[0].disposed,1);
+  assert.equal(h.devices[0].destroyed,1);assert.equal(h.sockets.length,1);
+  assert(h.messages.some(x=>x.type==='stopped'&&x.message==='Pool disconnected; mining stopped'));
+});
+
+test('only the explicit unlimited choice bypasses a finite duration',async()=>{
+  const h=harness();
+  for(const minutes of [undefined,null,'',0,-1,61,Infinity,'Infinity',NaN,'forever']) {
+    await h.controller({...start,minutes});
+  }
+  assert.equal(h.sockets.length,0);assert.equal(h.timers.size,0);
+  assert.equal(h.messages.filter(x=>x.type==='error').length,10);
 });
 
 test('duplicate authorization cannot allocate a second solver',async()=>{

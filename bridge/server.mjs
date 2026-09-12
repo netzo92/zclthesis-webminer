@@ -50,18 +50,19 @@ server.on('upgrade',async(req,socket,head)=>{
   finally {--pendingUpgrades;}
 });
 wss.on('connection',ws=>{
-  let upstream,address,authorized=false,failed=false,buffer='',sequence=10,last=Date.now(),tokens=12;
+  let upstream,address,authorizationTimeout,authorized=false,failed=false,buffer='',sequence=10,last=Date.now(),tokens=12;
   const jobs=new Map(),pending=new Map();
   const send=value=>{if(ws.readyState===WebSocket.OPEN){if(ws.bufferedAmount>65536){ws.terminate();return;}ws.send(JSON.stringify(value));}};
   const fail=message=>{if(failed)return;failed=true;send({type:'error',message});upstream?.destroy();ws.close(1008,'Mining session ended');};
   const rpc=(id,method,params)=>upstream.write(JSON.stringify({id,method,params})+'\n');
   const helloTimeout=setTimeout(()=>fail('Mining address was not supplied.'),10000);
-  const lifetime=setTimeout(()=>fail('Session finished. Start a new session to continue.'),61*60*1000);
+  // Authorized sessions have no wall-clock limit. Heartbeat and upstream idle
+  // checks still reclaim dead connections; authorization itself stays bounded.
   let alive=true;
   const heartbeat=setInterval(()=>{if(!alive){ws.terminate();return;}alive=false;ws.ping();},30000);
   ws.on('pong',()=>{alive=true;});
   ws.on('error',()=>{});
-  ws.on('close',()=>{clearTimeout(helloTimeout);clearTimeout(lifetime);clearInterval(heartbeat);upstream?.destroy();});
+  ws.on('close',()=>{clearTimeout(helloTimeout);clearTimeout(authorizationTimeout);clearInterval(heartbeat);upstream?.destroy();});
   ws.on('message',(raw,binary)=>{
     if(failed||ws.readyState!==WebSocket.OPEN)return;
     const now=Date.now();tokens=Math.min(12,tokens+(now-last)/1000);last=now;
@@ -71,6 +72,7 @@ wss.on('connection',ws=>{
       if(message?.type!=='hello'||!isZclAddress(message.address)){fail('Enter a valid ZCL transparent address.');return;}
       if(ws.testingOnly&&message.address!==testAddress){fail('The pool is still completing its launch checks.');return;}
       clearTimeout(helloTimeout);address=message.address;
+      authorizationTimeout=setTimeout(()=>fail('Pool authorization timed out.'),30000);
       upstream=net.createConnection({host:'127.0.0.1',port:stratumPort});
       upstream.setTimeout(120000);upstream.on('timeout',()=>fail('Pool connection timed out.'));
       upstream.on('error',()=>fail('The mining pool is unavailable.'));
@@ -85,7 +87,7 @@ wss.on('connection',ws=>{
             if(reply.id===1){
               if(reply.error||!Array.isArray(reply.result)||!/^[0-9a-f]{8}$/i.test(reply.result[1]))throw new Error();
               send({type:'session',noncePrefix:reply.result[1]});rpc(2,'mining.authorize',[address,'c=ZCL']);
-            }else if(reply.id===2){authorized=reply.result===true&&!reply.error;if(!authorized){fail('The pool rejected this payout address.');return;}send({type:'authorized',address,feePercent:0.8});}
+            }else if(reply.id===2){authorized=reply.result===true&&!reply.error;clearTimeout(authorizationTimeout);if(!authorized){fail('The pool rejected this payout address.');return;}send({type:'authorized',address,feePercent:0.8});}
             else if(reply.method==='mining.set_target'){
               const target=reply.params?.[0];if(typeof target!=='string'||!/^[0-9a-f]{64}$/i.test(target))throw new Error();send({type:'target',target});
             }else if(reply.method==='mining.notify'){

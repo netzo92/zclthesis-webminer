@@ -127,11 +127,11 @@ export function createMinerController(options={}) {
       const endpoint=new URL(data.endpoint);
       if(endpoint.protocol!=='wss:'||endpoint.hostname!=='pool.zclthesis.com'||endpoint.pathname!=='/ws'||endpoint.port||endpoint.username||endpoint.password||endpoint.search||endpoint.hash) throw new Error('Invalid pool endpoint.');
       if(!env.gpu) throw new Error('This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.');
-      const minutes=Number(data.minutes);
-      if(!Number.isFinite(minutes)||minutes<1||minutes>60) throw new Error('Choose a session from 1 to 60 minutes.');
-      const session={active:true,deadline:env.now()+minutes*60000,tasks:new Set(),shareId:0};
+      const unlimited=data.minutes==='unlimited',minutes=Number(data.minutes);
+      if(!unlimited&&(!Number.isFinite(minutes)||minutes<1||minutes>60)) throw new Error('Choose a session from 1 to 60 minutes, or Until I stop.');
+      const session={active:true,deadline:unlimited?Infinity:env.now()+minutes*60000,tasks:new Set(),shareId:0};
       current=session;
-      session.timer=env.setTimeout(()=>void stop(session,'Session time limit reached'),minutes*60000);
+      if(!unlimited) session.timer=env.setTimeout(()=>void stop(session,'Session time limit reached'),minutes*60000);
       send('status',{message:'Connecting to the pool'});
       session.socket=new env.WebSocket(endpoint);
       session.socket.onopen=()=>{

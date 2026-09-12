@@ -3,9 +3,16 @@
 This repository implements an experimental **WebGPU Equihash 192,7 solver**
 for Zclassic's `ZcashPoW` personalization. It performs the actual Blake2b and
 collision search on the visitor's GPU. The bilingual interface starts only after
-the visitor supplies a public ZCL address, chooses a time limit, acknowledges
+the visitor supplies a public ZCL address, chooses a duration, acknowledges
 GPU/electricity use, and presses Start. Hiding the tab or pressing Stop terminates
 the worker. No private key or deposit is required.
+
+Both languages offer **Until I stop (no time limit)** alongside 5, 15, 30 and
+60-minute sessions. Five minutes remains the default. The explicit `unlimited`
+choice creates no worker deadline timer; finite sessions still enforce their
+deadline even if a timer is delayed. Keep the tab visible and device awake.
+Stop, a hidden/closed tab, pool disconnection, or GPU failure ends mining, and
+an ended session never restarts automatically.
 
 The English and Spanish address forms link to the self-contained offline wallet
 download at `https://zclthesis.com/offline-wallet.html` and the matching language's
@@ -46,7 +53,9 @@ handshakes in its connection limits.
 The bridge connects only to `127.0.0.1:2192`. It validates the address checksum,
 subscribes and authorizes that address, and accepts only bounded canonical
 400-byte solutions for recent jobs from that connection. It applies frame,
-connection, per-peer, rate, queue, and session limits. It never handles payouts;
+connection, per-peer, rate, and queue limits. Healthy authorized connections have
+no fixed lifetime; heartbeat, initial-address, authorization and upstream-idle timeouts still
+remove disconnected or inactive clients. It never handles payouts;
 the separate pool ledger allocates 99.2% of round rewards to participating miners
 and 0.8% to the operator, with a 0.05 ZCL miner payout threshold.
 
@@ -122,8 +131,10 @@ GPU-generated test results saved by `tests/run-browser-test.mjs`.
 
 Validation so far on Chrome / Apple Metal 3:
 
-- Automated tests: 28 passed, including proof verification, worker stop/restart,
-  malformed submissions, launch gates, connection limits and address binding.
+- Automated tests cover proof verification, worker stop/restart, malformed
+  submissions, launch gates, connection limits and address binding. Virtual-time
+  duration tests exercise continued work after the old hour limit and after a
+  month, plus finite deadlines, manual Stop, disconnection and hidden-tab cleanup.
 - All six GPU Blake2b vectors passed.
 - A real 96,5 proof was generated and independently accepted by Python hashlib.
 - Forced 64 KiB storage chunking generated another independently valid 96,5 proof.
