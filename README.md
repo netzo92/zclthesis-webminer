@@ -7,13 +7,22 @@ the visitor supplies a public ZCL address, chooses a time limit, acknowledges
 GPU/electricity use, and presses Start. Hiding the tab or pressing Stop terminates
 the worker. No private key or deposit is required.
 
+The English and Spanish address forms link to the self-contained offline wallet
+download at `https://zclthesis.com/offline-wallet.html` and the matching language's
+`#wallet` setup guide. The help explains saving the page, disconnecting before
+generating a key, backing up the private key, and returning with only the public
+address. The mining page does not generate or receive private keys.
+
 The interface connects through a restricted WebSocket bridge to our fixed local
 Stratum server. It does not expose node RPC or accept arbitrary proxy targets.
 The solver core itself has no network connection or payout destination.
 
-**Launch status:** implementation and correctness testing are in progress.
-Historical GPU proof generation and isolated transport tests have passed;
-this document does not yet claim accepted live pool shares or mainnet payouts.
+**Launch status:** public mining opened on September 12, 2026. Check the
+[live pool status](https://pool.zclthesis.com/) before starting. The final
+two-minute Mac GPU test received 7 accepted shares and zero rejects across three
+jobs, with accepted work credited to the intended payout account. No mainnet
+block or payment occurred in the launch tests; see the
+[deployment record](https://github.com/netzo92/zclthesis-pool/blob/dev/docs/GCP-OPERATIONS.md#final-repaired-deployment-and-public-reopening).
 
 ## Pool transport and deployment
 
@@ -125,8 +134,11 @@ Validation so far on Chrome / Apple Metal 3:
   WebGPU proofs on Ubuntu with ASan/UBSan, and rejected nine mutations. The
   [native regression](https://github.com/netzo92/zclthesis-pool/tree/97e5490/stratum/tests/fixtures)
   records the fixture and reproducible command.
-- End-to-end acceptance through the live pool remains untested. The timing above
-  is one correctness run, not a sustained speed or profitability benchmark.
+- The final two-minute live pool test generated 20 valid proofs and received
+  7 accepted target-qualified shares with zero rejects across three jobs. The
+  production ledger verified their account attribution and the configured fee
+  recipient. No mainnet block or payment occurred. These finite runs are not
+  sustained speed or profitability benchmarks.
 
 The optional CDP runner only targets the isolated localhost test page. Set
 `ZCL_TEST_CDP_URL` to a separate test browser's localhost endpoint. Running the
