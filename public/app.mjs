@@ -2,6 +2,20 @@ const es=document.documentElement.lang==='es',$=id=>document.getElementById(id);
 let worker,ticker,started,stopping=false,poolOpen=false,checkingPool=false;
 const counts={solutions:0,submitted:0,accepted:0,rejected:0};
 const status=text=>$('status').textContent=text;
+// The owner explicitly approved publishing this recipient for blank-address donations.
+const poolDonationAddress='t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d';
+function renderAddressWarning(){
+  const donating=!(typeof $('address').value==='string'&&$('address').value.trim());
+  $('address-warning').hidden=!donating;
+  $('donation-address').textContent=poolDonationAddress;
+  $('donation-consent').required=donating;
+  $('donation-consent').disabled=!!worker||!donating;
+  $('start').textContent=donating?(es?'Iniciar minería como donación':'Start donation mining'):(es?'Iniciar minería':'Start mining');
+}
+$('address').addEventListener('input',()=>{
+  $('donation-consent').checked=false;$('consent').checked=false;renderAddressWarning();
+});
+renderAddressWarning();
 const messages={
   'Connecting to the pool':'Conectando al pool','Preparing GPU memory and shaders':'Preparando la memoria GPU y los shaders',
   'Stopped':'Detenido','Session ended':'Sesión finalizada','Mining stopped':'Minería detenida','Session time limit reached':'Se alcanzó el límite de tiempo',
@@ -15,7 +29,7 @@ const messages={
   'The mining pool is unavailable.':'El pool de minería no está disponible.'
 };
 function text(message){return es?(messages[message]||'La minería se detuvo por un error técnico. Consulta el estado del pool y comprueba que tu navegador y GPU sean compatibles.'):message;}
-function finish(){clearInterval(ticker);worker?.terminate();worker=undefined;$('start').disabled=!poolOpen;$('stop').disabled=true;$('address').disabled=false;$('minutes').disabled=false;$('progress').value=0;}
+function finish(){clearInterval(ticker);worker?.terminate();worker=undefined;$('start').disabled=!poolOpen;$('stop').disabled=true;$('address').disabled=false;$('minutes').disabled=false;$('progress').value=0;$('donation-consent').checked=false;renderAddressWarning();}
 function observedTime(response,localNow){
   const raw=response.headers?.get?.('date'),serverNow=Date.parse(raw);
   const rawAge=response.headers?.get?.('age'),age=rawAge==null?0:Number(rawAge)*1000;
@@ -94,12 +108,15 @@ document.addEventListener('visibilitychange',()=>{if(document.hidden)stop(es?'Pe
 window.addEventListener('pagehide',()=>{worker?.terminate();});
 $('mining-form').addEventListener('submit',event=>{
   event.preventDefault();if(worker||!poolOpen||!$('consent').checked)return;
-  const address=$('address').value.trim();if(!/^t1[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)){status(es?'Introduce una dirección transparente ZCL válida.':'Enter a valid ZCL transparent address.');return;}
+  const suppliedAddress=$('address').value.trim(),donating=!suppliedAddress;
+  if(donating&&!$('donation-consent').checked){status(es?'Confirma que quieres donar las recompensas de esta sesión al pool. No recibirás pagos.':'Confirm that you want to donate this session’s rewards to the pool. You will receive no payouts.');return;}
+  const address=suppliedAddress||poolDonationAddress;
+  if(!/^t1[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)){status(es?'Introduce una dirección transparente ZCL válida.':'Enter a valid ZCL transparent address.');return;}
   if(!navigator.gpu){status(text('This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.'));return;}
   stopping=false;for(const key in counts){counts[key]=0;$(key).textContent='0';}
-  $('address-line').textContent=(es?'Dirección de pago: ':'Payout address: ')+address;
+  $('address-line').textContent=(donating?(es?'Donación al pool; no recibirás pagos. Destino: ':'Donating to the pool; you receive no payouts. Destination: '):(es?'Dirección de pago: ':'Payout address: '))+address;
   started=Date.now();$('elapsed').textContent='0:00';ticker=setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);$('elapsed').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');},1000);
-  $('start').disabled=true;$('stop').disabled=false;$('address').disabled=true;$('minutes').disabled=true;
+  $('start').disabled=true;$('stop').disabled=false;$('address').disabled=true;$('minutes').disabled=true;$('donation-consent').disabled=true;
   worker=new Worker('/mine/src/miner-worker.mjs?v=20260912-unlimited',{type:'module'});
   worker.onerror=()=>{status(es?'Error del minero; minería detenida.':'Miner error; mining stopped.');finish();};
   worker.onmessage=({data})=>{

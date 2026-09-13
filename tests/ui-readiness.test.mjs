@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {readFile} from 'node:fs/promises';
 import vm from 'node:vm';
+import {isZclAddress} from '../bridge/validation.mjs';
 
 const app=await readFile(new URL('../public/app.mjs',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
@@ -75,8 +76,80 @@ test('both pages place live stats above the mining form and version changed asse
   for(const lang of ['en','es']){
     const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
     assert.ok(html.indexOf('id="pool-heading"')<html.indexOf('id="mining-form"'));
-    assert.match(html,/style\.css\?v=20260913-readiness/);assert.match(html,/app\.mjs\?v=20260913-readiness/);
+    assert.match(html,/style\.css\?v=20260913-address-warning/);assert.match(html,/app\.mjs\?v=20260913-address-warning/);
     assert.match(html,lang==='en'?/Network hashrate/:/Hashrate de la red/);
+  }
+});
+test('empty payout warnings follow the address field and require a fresh donation acknowledgment',async()=>{
+  for(const lang of ['en','es']){
+    const h=readinessHarness({lang});await tick();
+    assert.equal(h.get('address-warning').hidden,false);
+    for(const [value,hidden] of [['   ',false],['t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs',true],['',false]]){
+      h.get('address').value=value;h.listeners.get('address:input')();
+      assert.equal(h.get('address-warning').hidden,hidden);
+      assert.equal(h.get('donation-consent').required,!hidden);
+      assert.equal(h.get('donation-consent').disabled,hidden);
+      assert.equal(h.get('donation-consent').checked,false);
+      assert.equal(h.get('consent').checked,false);
+      assert.equal(h.get('address').value,value,'warning does not overwrite the input field');
+    }
+    const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
+    assert.doesNotMatch(html,/<input id="address"[^>]* required /);
+    assert.match(html,/<input id="donation-consent" type="checkbox" required>/);
+    assert.match(html,lang==='en'?/NO ADDRESS ENTERED — DONATE TO POOL/:/SIN DIRECCIÓN — DONAR AL POOL/);
+    assert.match(html,lang==='en'?/You will receive no mining payouts/:/No recibirás pagos de minería/);
+    assert.match(html,/<code id="donation-address">t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d<\/code>/);
+  }
+});
+
+test('blank-address donations need both consents, bind the approved recipient, and never replace an entered address',async()=>{
+  const recipient='t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d';
+  const personalAddress='t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs';
+  assert.equal(isZclAddress(recipient),true,'the approved recipient passes the actual bridge checksum validator');
+  for(const lang of ['en','es']){
+    const elements=new Map(),listeners=new Map(),workers=[];
+    const get=id=>{if(!elements.has(id))elements.set(id,{value:'',checked:false,textContent:'',
+      addEventListener(type,handler){listeners.set(id+':'+type,handler);}});return elements.get(id);};
+    const document={documentElement:{lang},hidden:false,getElementById:get,
+      addEventListener(type,handler){listeners.set('document:'+type,handler);}};
+    class Worker{constructor(){this.messages=[];workers.push(this);}postMessage(message){this.messages.push(message);}terminate(){this.terminated=true;}}
+    vm.runInNewContext(app,{Date,document,navigator:{gpu:{}},Worker,
+      window:{addEventListener(){}},setInterval(){},clearInterval(){},setTimeout,clearTimeout,AbortController,
+      fetch:async url=>({ok:true,json:async()=>({schemaVersion:1,asset:'ZCL',generatedAt:new Date().toISOString(),
+        ...(url.includes('pool.json')?{acceptingMiners:true,feePercent:0.8}:{node:{synced:true}})})}),
+    });
+    await tick();get('minutes').value='unlimited';
+    const submit=()=>listeners.get('mining-form:submit')({preventDefault(){}});
+    assert.equal(workers.length,0);
+    get('consent').checked=true;submit();assert.equal(workers.length,0,'GPU consent alone cannot donate');
+    get('consent').checked=false;get('donation-consent').checked=true;submit();
+    assert.equal(workers.length,0,'donation consent alone cannot start GPU use');
+    get('consent').checked=true;submit();assert.equal(workers.length,1);
+    assert.equal(workers[0].messages[0].address,recipient);
+    assert.equal(workers[0].messages[0].minutes,'unlimited');
+    assert.equal(get('donation-address').textContent,recipient);
+    assert.match(get('address-line').textContent,lang==='en'?/Donating to the pool; you receive no payouts/:/Donación al pool; no recibirás pagos/);
+    assert.equal(get('donation-consent').disabled,true);
+    listeners.get('stop:click')();assert.equal(workers[0].terminated,true);
+    assert.equal(get('donation-consent').checked,false);
+    submit();assert.equal(workers.length,1,'a stopped donation needs fresh acknowledgment');
+    get('address').value='   ';listeners.get('address:input')();
+    get('consent').checked=true;submit();assert.equal(workers.length,1,'whitespace requires donation acknowledgment');
+    get('donation-consent').checked=true;submit();assert.equal(workers.length,2);
+    assert.equal(workers[1].messages[0].address,recipient);
+    document.hidden=true;listeners.get('document:visibilitychange')();assert.equal(workers[1].terminated,true);
+    document.hidden=false;listeners.get('document:visibilitychange')();await tick();
+    assert.equal(workers.length,2,'returning to a tab never restarts a donation');
+    get('address').value='not-a-zcl-address';listeners.get('address:input')();
+    get('consent').checked=true;get('donation-consent').checked=true;submit();
+    assert.equal(workers.length,2,'malformed entered addresses never become donations');
+    get('address').value=personalAddress;listeners.get('address:input')();
+    get('consent').checked=true;submit();assert.equal(workers.length,3);
+    assert.equal(workers[2].messages[0].address,personalAddress);
+    assert.equal(get('address-warning').hidden,true);
+    assert.equal(get('donation-consent').checked,false);
+    assert.match(get('address-line').textContent,lang==='en'?/^Payout address: /:/^Dirección de pago: /);
+    listeners.get('stop:click')();
   }
 });
 test('English and Spanish Start controls require fresh pool and node observations',async()=>{

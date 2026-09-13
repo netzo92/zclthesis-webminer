@@ -3,7 +3,8 @@
 This repository implements an experimental **WebGPU Equihash 192,7 solver**
 for Zclassic's `ZcashPoW` personalization. It performs the actual Blake2b and
 collision search on the visitor's GPU. The bilingual interface starts only after
-the visitor supplies a public ZCL address, chooses a duration, acknowledges
+the visitor supplies a public ZCL address or explicitly accepts a donation,
+chooses a duration, acknowledges
 GPU/electricity use, and presses Start. Hiding the tab or pressing Stop terminates
 the worker. No private key or deposit is required.
 
@@ -19,6 +20,17 @@ download at `https://zclthesis.com/offline-wallet.html` and the matching languag
 `#wallet` setup guide. The help explains saving the page, disconnecting before
 generating a key, backing up the private key, and returning with only the public
 address. The mining page does not generate or receive private keys.
+
+An empty or whitespace-only payout field displays **DONATE TO POOL** in both
+languages, shows the owner-approved public recipient
+`t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d`, and explains that the visitor receives no
+mining payouts. A separate unchecked acknowledgment is required before Start can
+use this destination. The ordinary 0.8% fee and 0.05 ZCL payout threshold still
+apply. Entered payout addresses always take precedence; malformed entered
+addresses never fall back to donations. Editing the address clears both consent
+checkboxes. Ending a donation session clears its acknowledgment, so a restart
+requires a fresh choice. No editing, status refresh, or checkbox action starts
+GPU work. The bridge still validates every destination's ZCL address checksum.
 
 The interface connects through a restricted WebSocket bridge to our fixed local
 Stratum server. It does not expose node RPC or accept arbitrary proxy targets.
