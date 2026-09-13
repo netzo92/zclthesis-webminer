@@ -1,4 +1,4 @@
-// Public ledger observations only; this module never starts a miner or estimates money.
+// Public ledger observations and validated conditional allocations; never starts a miner.
 export const donationAddress='t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d';
 export const isAmount=value=>typeof value==='string'&&/^(?:0|[1-9][0-9]{0,15})$/.test(value)&&BigInt(value)<=2100000000000000n;
 export const isTime=value=>typeof value==='string'&&/^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z$/.test(value)&&Number.isFinite(Date.parse(value));
@@ -56,4 +56,36 @@ export function observe(points,point,{maxPoints=180,maxAge=5400000}={}){
   const latest=points.at(-1);
   if(latest&&Date.parse(point.at)<=Date.parse(latest.at))return points;
   return [...points,point].filter(p=>Date.parse(p.at)>=Date.parse(point.at)-maxAge).slice(-maxPoints);
+}
+
+// A conditional allocation is never credited money; accept it only with fresh,
+// complete address and round observations. Exact monetary values stay strings.
+export function validProjection(data,address,now=Date.now()){
+  const fresh=value=>isTime(value)&&now-Date.parse(value)<=180000&&Date.parse(value)-now<=60000;
+  const p=data?.miner?.projection,m=data?.miner;
+  if(!Number.isFinite(now)||data?.address!==address||data?.status!=='ok'||!fresh(data.generatedAt)||
+     !m||!['ok','not-found'].includes(m.status)||m.accountingHeld||m.payoutLocked||
+     !p||p.schemaVersion!==1||p.asset!=='ZCL'||p.address!==address||p.status!=='ok'||p.reason!==null||
+     p.basis!=='conditional-next-block-subsidy'||p.workBasis!=='retained-unconsumed-round-shares'||
+     p.subsidyBasis!=='next-height-subsidy-excluding-transaction-fees'||p.feePercent!=='0.8'||
+     !fresh(p.generatedAt)||!fresh(p.sourceGeneratedAt)||Date.parse(p.sourceGeneratedAt)>Date.parse(p.generatedAt)+1000||
+     !Number.isSafeInteger(p.tipHeight)||p.tipHeight<0||p.height!==p.tipHeight+1||
+     typeof p.tipHash!=='string'||!/^[a-f0-9]{64}$/.test(p.tipHash)||
+     !(p.roundId==='initial'||typeof p.roundId==='string'&&/^[a-f0-9]{64}$/.test(p.roundId))||
+     !['subsidyZat','grossZat','poolFeeZat','additionalDonationZat','allocationZat'].every(key=>isAmount(p[key])))return false;
+  const weight=value=>typeof value==='string'&&/^(?:0|[1-9]\d{0,35})\.\d{24}$/.test(value);
+  if(!weight(p.poolWeight)||!weight(p.addressWeight))return false;
+  const pool=BigInt(p.poolWeight.replace('.','')),own=BigInt(p.addressWeight.replace('.',''));
+  if(pool<=0n||own>pool||typeof p.sharePercent!=='number'||!Number.isFinite(p.sharePercent)||p.sharePercent<0||p.sharePercent>100)return false;
+  const percent=Number(own)/Number(pool)*100;
+  if(Math.abs(p.sharePercent-percent)>Math.max(0.000001,percent*0.000001))return false;
+  const gross=BigInt(p.grossZat),subsidy=BigInt(p.subsidyZat);
+  if(subsidy<=0n||gross>subsidy||gross!==BigInt(p.poolFeeZat)+BigInt(p.additionalDonationZat)+BigInt(p.allocationZat)||own===0n&&gross!==0n)return false;
+  const proportional=subsidy*own/pool;
+  if(gross<proportional||gross>proportional+1n)return false;
+  return true;
+}
+export function observeProjection(previous,projection,address){
+  const same=previous?.address===address&&previous.roundId===projection.roundId;
+  return {address,roundId:projection.roundId,points:observe(same?previous.points:[],{at:projection.generatedAt,value:projection.allocationZat})};
 }

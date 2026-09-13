@@ -64,8 +64,9 @@ Hashrate and network percentages are explicitly estimates from accepted work
 over five minutes (with a separate one-hour estimate) and a network observation
 over the last 120 blocks. Stale network observations cannot supply percentages.
 
-The SVG chart switches between timestamped credited-reward observations and the
-existing browser’s actual accepted-share counter. It retains at most 180 points
+The SVG chart switches between timestamped credited-reward observations, the
+existing browser’s actual accepted-share counter, and a separately labeled
+conditional next-block allocation. It retains at most 180 points
 from the last 90 minutes in memory, inserts no historical earnings, and breaks
 lines across observation gaps longer than 90 seconds. A single initial point
 is identified as such; zero rewards remain zero. A keyboard-accessible slider
@@ -80,6 +81,45 @@ exact zatoshi amounts, reward conservation, available-balance progress, work
 ratios, and source freshness. The dashboard has no mining-control hooks: the
 existing consent, donation acknowledgment, Start, Stop, and hidden-tab behavior
 remain in `app.mjs`.
+
+### Conditional next-block allocation
+
+The amber summary and third chart mode show **Estimated allocation if the pool
+finds the next block**, based on the backend’s exact allocator, current retained
+unconsumed round work, and the subsidy at the next height. Transaction fees are
+excluded; the pool fee and any additional account donation are deducted. This is
+a conditional scenario, never credited rewards, available balance, or payout
+progress. The estimate can rise or fall as other miners submit work. A blank
+address uses the explicitly disclosed shared treasury destination and includes
+all donors, owner activity, and native miners using that address.
+
+The estimate requires a fresh complete ledger, matching address, verified tip,
+nonempty round, and no accounting hold. Empty rounds, partial data, stale subsidy
+observations, malformed values, and refresh failures suppress the amount and
+conditional chart. A verified zero-work address in a nonempty round can show
+zero. Exact amount conservation and the allocator’s possible one-zatoshi
+largest-remainder adjustment are checked in `earnings-data.mjs`.
+
+Only received observations become chart points; nothing interpolates money or
+backfills earlier history. Changing address or pool allocation round resets the
+series. A genuine new observation with a changed allocation can briefly highlight
+the estimate, including a decrease; reduced-motion preferences disable the pulse.
+Automatic chart selection falls back to actual credited history or accepted work
+when an estimate is unavailable. An explicit chart choice stays selected with
+its status explanation. The exact-value table and keyboard slider remain usable
+in all three modes. Mining controls and consent behavior are unchanged.
+
+The conditional-allocation change passed all 50 Node tests. Isolated fixture
+browser checks passed English and Spanish at 320 and 1,440 pixels, including all
+three modes, exact-value inspection, balance/progress separation, round/address
+resets, verified zero, partial/held/stale/failure suppression, automatic fallback,
+and receipt of changes after the 180-observation cap. Reduced motion and unchanged
+unchecked consents were verified. The browser had all traffic intercepted and
+mining workers/connections blocked; no live mining or shared-browser interaction
+occurred. The actual PHP backend’s
+synthetic `round-projection.php --fixture` output also passed both frontend
+validators and both language renderers unchanged. These fixtures validate the
+UI and contract compatibility, not live allocation accuracy.
 
 ## Pool transport and deployment
 

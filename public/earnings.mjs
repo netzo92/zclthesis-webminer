@@ -1,4 +1,4 @@
-import {donationAddress,isAddress,isAmount,isTime,formatZcl,validSnapshot,referenceTime,observe} from './earnings-data.mjs';
+import {donationAddress,isAddress,isAmount,isTime,formatZcl,validSnapshot,referenceTime,observe,validProjection,observeProjection} from './earnings-data.mjs';
 const mount=document.getElementById('earnings-dashboard');
 if(mount){
 const es=document.documentElement.lang==='es',locale=es?'es-ES':'en-US',$=id=>document.getElementById('earnings-'+id);
@@ -15,6 +15,7 @@ const t=es?{
  first:'Primera observación real; el gráfico crecerá con nuevas lecturas.',gap:'Los huecos indican interrupciones en las observaciones.',chartNote:'Observaciones tomadas con esta página abierta; no son fechas de creación de ingresos.',
  workNote:'Contador real de este navegador; no equivale a monedas ganadas. Hora del dispositivo en UTC.',noMining:'No hay minería activa en este navegador.',updated:'Registro observado',
  network:'de la red, estimado',netMissing:'Proporción de la red no disponible',hour:'Estimación de 1 h',rateNote:'Hashrate estimado a partir del trabajo aceptado en los últimos 5 minutos; puede variar mucho. La estimación de red usa los últimos 120 bloques. Los porcentajes no son una previsión de ingresos.',
+ projection:'Asignación estimada si el pool encuentra el próximo bloque',projectionWait:'Estimación no disponible: se requiere una ronda verificada y actual, sin retenciones contables.',projectionStale:'Estimación oculta: la observación está desactualizada o no se pudo actualizar.',projectionNote:'Escenario condicional, no recompensas ganadas. Solo subsidio; excluye comisiones de transacción. Puede subir o bajar con el trabajo de la ronda.',projectionShared:'Dirección compartida: incluye a todos los donantes, al propietario y a los mineros nativos; no son tus ingresos personales.',projectionAddress:'Todos los mineros que usan la dirección seleccionada.',projectionRound:'Ronda observada',projectionInitial:'ronda inicial',projectionWork:'del trabajo registrado de la ronda',projectionSubsidy:'Subsidio del próximo bloque',projectionFee:'Comisión del pool',projectionDonation:'Donación adicional de la cuenta',
  poolNote:'Recompensas brutas de bloques antes de la comisión del 0,8%; incluye las inmaduras.',poolPartial:'Historial parcial del pool: ≥ indica un mínimo verificado.',poolUnavailable:'Recompensas del pool no disponibles.',poolStale:'Observación del pool desactualizada.',poolObserved:'Bloques del pool verificados',
 }: {
  title:'Your mining, in view.',donateTitle:'Pool donation activity.',address:'Selected payout address',donation:'POOL DONATION DESTINATION · NO PAYOUTS TO YOU',
@@ -29,6 +30,7 @@ const t=es?{
  first:'First real observation; the chart grows with new readings.',gap:'Gaps mark interruptions in observations.',chartNote:'Observations collected with this page open, not the times rewards were earned.',
  workNote:'The actual counter from this browser; it is not coins earned. Device time in UTC.',noMining:'This browser is not currently mining.',updated:'Ledger observed',
  network:'of the network, estimated',netMissing:'Network share unavailable',hour:'1-hour estimate',rateNote:'Hashrate is estimated from accepted work over the last 5 minutes and can vary widely. The network estimate uses the last 120 blocks. Percentages do not predict earnings.',
+ projection:'Estimated allocation if the pool finds the next block',projectionWait:'Estimate unavailable: requires a fresh, verified round with no accounting hold.',projectionStale:'Estimate hidden: the observation is stale or could not be refreshed.',projectionNote:'Conditional scenario, not earned rewards. Subsidy only; excludes transaction fees. It can rise or fall as the round’s work changes.',projectionShared:'Shared address: includes all donors, the owner, and native miners; these are not your personal earnings.',projectionAddress:'All miners using the selected address.',projectionRound:'Round observed',projectionInitial:'initial round',projectionWork:'of recorded round work',projectionSubsidy:'Next-block subsidy',projectionFee:'Pool fee',projectionDonation:'Additional account donation',
  poolNote:'Gross block rewards before the 0.8% pool fee; includes immature rewards.',poolPartial:'Partial pool history: ≥ marks a verified minimum.',poolUnavailable:'Pool rewards unavailable.',poolStale:'Pool observation is stale.',poolObserved:'Pool blocks checked',
 };
 const z=value=>formatZcl(value,locale),num=value=>new Intl.NumberFormat(locale,{maximumSignificantDigits:6}).format(value);
@@ -36,9 +38,19 @@ const dates=new Intl.DateTimeFormat(locale,{month:'short',day:'numeric',hour:'2-
 const time=value=>dates.format(new Date(value))+' UTC';
 const field=document.getElementById('address'),counter=document.getElementById('accepted'),stop=document.getElementById('stop');
 let recipient='',snapshot=null,failed=false,clockOffset=0,request=null,editTimer,chartMode='work',manualMode=false;
+let projectionHistory=null;
 let rewards=[],work=[],selected=null,sessionActive=!stop.disabled,sessionRecipient=null;
 const currentNow=()=>Date.now()+clockOffset;
 const old=data=>!isTime(data?.generatedAt)||currentNow()-Date.parse(data.generatedAt)>180000||currentNow()-Date.parse(data.generatedAt)<-300000;
+function projectionAvailable(){return !failed&&validProjection(snapshot,recipient,currentNow());}
+function renderProjection(){
+ const available=projectionAvailable(),p=available?snapshot.miner.projection:null;
+ $('projection').dataset.status=available?'ok':'unavailable';
+ $('projection-value').textContent=p?z(p.allocationZat):'—';
+ $('projection-recipient').textContent=!field.value.trim()||recipient===donationAddress?t.projectionShared:t.projectionAddress;
+ $('projection-detail').textContent=p?num(p.sharePercent)+'% '+t.projectionWork+' · '+t.projectionSubsidy+': '+z(p.subsidyZat)+' ZCL · '+t.projectionFee+': '+z(p.poolFeeZat)+' ZCL · '+t.projectionDonation+': '+z(p.additionalDonationZat)+' ZCL.':'';
+ $('projection-status').textContent=p?t.projectionRound+': '+time(p.generatedAt)+' · '+(p.roundId==='initial'?t.projectionInitial:p.roundId.slice(0,12)+'…')+'. '+t.projectionNote:(failed||snapshot&&old(snapshot)?t.projectionStale:t.projectionWait);
+}
 function clearFigures(){
  for(const key of ['credited','available','immature','miner-rate','pool-rate','miner-percent','pool-percent','pool-allTime','pool-last24h','pool-lastHour'])$(key).textContent='—';
  for(const key of ['allTime','last24h','lastHour']){const node=$('pool-'+key+'-blocks');if(node)node.textContent=es?'— bloques':'— blocks';}
@@ -77,6 +89,8 @@ function poolRewards(data){
  $('pool-note').textContent=available?[t.poolNote,mined.status==='partial'?t.poolPartial:'',old(mined)?t.poolStale:'',t.poolObserved+': '+time(mined.generatedAt)+'.'].filter(Boolean).join(' '):t.poolUnavailable;
 }
 function render(){
+ if(!manualMode)chartMode=projectionAvailable()&&BigInt(snapshot.miner.projection.allocationZat)>0n?'projection':snapshot?.miner&&BigInt(snapshot.miner.creditedZat)>0n?'rewards':'work';
+ renderProjection();
  if(!snapshot||snapshot.status==='unavailable'){
   clearFigures();mount.dataset.state='unavailable';$('status').textContent=recipient?t.unavailable:t.invalid;renderChart();return;
  }
@@ -96,12 +110,14 @@ function render(){
 function svg(tag,attrs={}){const el=document.createElementNS('http://www.w3.org/2000/svg',tag);for(const [key,value]of Object.entries(attrs))el.setAttribute(key,String(value));return el;}
 function chartAmount(point){return chartMode==='work'?BigInt(point.value).toLocaleString(locale)+' '+t.shares:z(point.value)+' ZCL';}
 function renderChart(){
- const points=chartMode==='work'?(recipient===sessionRecipient||sessionRecipient===null?work:[]):rewards;
+ const projecting=chartMode==='projection',projectionReady=projectionAvailable();
+ const points=projecting?(projectionReady?projectionHistory?.points||[]:[]):chartMode==='work'?(recipient===sessionRecipient||sessionRecipient===null?work:[]):rewards;
+ $('chart').dataset.mode=chartMode;
  const drawing=$('svg');drawing.replaceChildren();
  for(const button of mount.querySelectorAll('[data-earnings-mode]'))button.setAttribute('aria-pressed',String(button.dataset.earningsMode===chartMode));
  const last=points.at(-1),value=last?chartAmount(last):'—';
- $('chart-value').textContent=(chartMode==='work'?t.work:t.rewards)+' · '+value;
- const caption=[chartMode==='rewards'&&(failed||!snapshot||snapshot.status==='unavailable'||old(snapshot))?t.stale:'',chartMode==='work'?t.workNote:t.chartNote,chartMode==='work'&&!sessionActive?t.noMining:'',points.length===1?t.first:'',t.gap].filter(Boolean).join(' ');
+ $('chart-value').textContent=(projecting?t.projection:chartMode==='work'?t.work:t.rewards)+' · '+value;
+ const caption=[chartMode==='rewards'&&(failed||!snapshot||snapshot.status==='unavailable'||old(snapshot))?t.stale:'',projecting?t.projectionNote+' '+t.chartNote:chartMode==='work'?t.workNote:t.chartNote,projecting&&!projectionReady?t.projectionWait:'',chartMode==='work'&&!sessionActive?t.noMining:'',points.length===1?t.first:'',t.gap].filter(Boolean).join(' ');
  const inspector=$('chart-inspect');inspector.max=Math.max(0,points.length-1);inspector.disabled=points.length<2;
  if(!points.length){$('chart-caption').textContent=t.noPoints+' '+caption;$('chart-table').replaceChildren();return;}
  const chosen=selected!==null&&selected<points.length?selected:points.length-1;inspector.value=chosen;
@@ -127,7 +143,7 @@ function sampleWork(reset=false){
  if(reset||work.length&&BigInt(count)<BigInt(work.at(-1).value)){work=[];selected=null;sessionRecipient=recipient;}
  const increased=work.length&&BigInt(count)>BigInt(work.at(-1).value);
  work=observe(work,{at:new Date().toISOString(),value:String(count)});
- if(increased){$('chart').dataset.pulse='true';setTimeout(()=>{$('chart').dataset.pulse='false';},650);}
+ if(increased&&chartMode==='work'){$('chart').dataset.pulse='true';setTimeout(()=>{$('chart').dataset.pulse='false';},650);}
  renderChart();
 }
 async function refresh(){
@@ -141,9 +157,15 @@ async function refresh(){
   const reference=referenceTime(response);if(!validSnapshot(data,expected)||Date.parse(data.generatedAt)>reference+300000)throw Error('Invalid ledger data');
   clockOffset=reference-Date.now();snapshot=data;failed=false;
   if(data.status==='unavailable')window.ZclTreasury?.unavailable();else window.ZclTreasury?.update(data.pool?.treasury,reference);
+  if(projectionAvailable()){
+   const previous=projectionHistory,p=data.miner.projection;
+   projectionHistory=observeProjection(previous,p,recipient);
+   const changed=previous?.address===recipient&&previous.roundId===p.roundId&&previous.points.at(-1)?.value!==p.allocationZat&&Date.parse(projectionHistory.points.at(-1).at)>Date.parse(previous.points.at(-1).at);
+   if(previous?.roundId!==p.roundId)selected=null;
+   if(changed){$('projection').dataset.pulse='true';if(chartMode==='projection')$('chart').dataset.pulse='true';setTimeout(()=>{$('projection').dataset.pulse='false';$('chart').dataset.pulse='false';},650);}
+  }
   if(data.status!=='unavailable'&&!old(data)){
    rewards=observe(rewards,{at:data.generatedAt,value:data.miner.creditedZat});
-   if(!manualMode&&BigInt(data.miner.creditedZat)>0n)chartMode='rewards';
   }
   render();
  }catch{
@@ -154,13 +176,13 @@ async function refresh(){
 function selectRecipient(){
  const supplied=field.value.trim(),next=isAddress(supplied||donationAddress)?supplied||donationAddress:'';
  if(recipient===next&&snapshot){renderRecipient();return;}
- request?.abort();request=null;recipient=next;snapshot=null;failed=false;rewards=[];selected=null;
+ request?.abort();request=null;recipient=next;snapshot=null;failed=false;rewards=[];projectionHistory=null;selected=null;
 
- renderRecipient();clearFigures();mount.dataset.state=next?'loading':'unavailable';$('status').textContent=next?t.loading:t.invalid;renderChart();refresh();
+ renderRecipient();clearFigures();renderProjection();mount.dataset.state=next?'loading':'unavailable';$('status').textContent=next?t.loading:t.invalid;renderChart();refresh();
 }
 for(const button of mount.querySelectorAll('[data-earnings-mode]'))button.addEventListener('click',()=>{chartMode=button.dataset.earningsMode;manualMode=true;selected=null;renderChart();});
 $('chart-inspect').addEventListener('input',event=>{selected=Number(event.target.value);renderChart();});
-field.addEventListener('input',()=>{clearTimeout(editTimer);request?.abort();request=null;snapshot=null;rewards=[];recipient='';clearFigures();renderChart();$('status').textContent=t.loading;editTimer=setTimeout(selectRecipient,500);});
+field.addEventListener('input',()=>{clearTimeout(editTimer);request?.abort();request=null;snapshot=null;rewards=[];projectionHistory=null;recipient='';clearFigures();renderProjection();renderChart();$('status').textContent=t.loading;editTimer=setTimeout(selectRecipient,500);});
 new MutationObserver(()=>sampleWork()).observe(counter,{childList:true,characterData:true,subtree:true});
 new MutationObserver(()=>{const active=!stop.disabled;if(active&&!sessionActive){sessionRecipient=recipient;sampleWork(true);}sessionActive=active;renderChart();}).observe(stop,{attributes:true,attributeFilter:['disabled']});
 selectRecipient();sampleWork(true);
