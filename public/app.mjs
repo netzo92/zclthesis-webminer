@@ -1,5 +1,5 @@
 const es=document.documentElement.lang==='es',$=id=>document.getElementById(id);
-let worker,ticker,started,stopping=false,poolOpen=false;
+let worker,ticker,started,stopping=false,poolOpen=false,checkingPool=false;
 const counts={solutions:0,submitted:0,accepted:0,rejected:0};
 const status=text=>$('status').textContent=text;
 const messages={
@@ -16,24 +16,81 @@ const messages={
 };
 function text(message){return es?(messages[message]||'La minería se detuvo por un error técnico. Consulta el estado del pool y comprueba que tu navegador y GPU sean compatibles.'):message;}
 function finish(){clearInterval(ticker);worker?.terminate();worker=undefined;$('start').disabled=!poolOpen;$('stop').disabled=true;$('address').disabled=false;$('minutes').disabled=false;$('progress').value=0;}
-async function checkPool(){
-  try{
-    const [poolResponse,nodeResponse]=await Promise.all([fetch('/api/pool.json',{cache:'no-store'}),fetch('/api/node.json',{cache:'no-store'})]);
-    if(!poolResponse.ok||!nodeResponse.ok)throw new Error();
-    const [pool,node]=await Promise.all([poolResponse.json(),nodeResponse.json()]);
-    const now=Date.now(),fresh=[pool.generatedAt,node.generatedAt].every(value=>{
-      const age=now-Date.parse(value);
-      return typeof value==='string'&&Number.isFinite(age)&&age>=-300000&&age<=180000;
-    });
-    poolOpen=pool.acceptingMiners===true&&pool.feePercent===0.8&&node.asset==='ZCL'&&node.node?.synced===true&&fresh;
-    $('pool-readiness').textContent=poolOpen?(es?'El pool está listo para aceptar mineros.':'The pool is ready to accept miners.'):(es?'El pool está completando sus comprobaciones de lanzamiento y la sincronización. La minería aún no está abierta.':'The pool is completing launch checks and synchronization. Mining is not open yet.');
-  }catch{poolOpen=false;$('pool-readiness').textContent=es?'El estado del pool no está disponible. Espera a que se confirme antes de empezar.':'Pool status is unavailable. Wait for readiness to be confirmed before starting.';}
-  if(!worker)$('start').disabled=!poolOpen;
+function observedTime(response,localNow){
+  const raw=response.headers?.get?.('date'),serverNow=Date.parse(raw);
+  const rawAge=response.headers?.get?.('age'),age=rawAge==null?0:Number(rawAge)*1000;
+  if(!Number.isFinite(age)||age<0||age>180000)throw new Error('cached');
+  return typeof raw==='string'&&Number.isFinite(serverNow)?{now:serverNow+age,server:true}:{now:localNow,server:false};
 }
+function observationProblem(value,now){
+  const age=now-Date.parse(value);
+  if(typeof value!=='string'||!Number.isFinite(age))return 'invalid';
+  if(age>180000)return 'stale';
+  if(age< -300000)return 'future';
+  return null;
+}
+function poolMessage(reason){
+  const translations={
+    ready:['The pool is ready to accept miners.','El pool está listo para aceptar mineros.'],
+    stale:['The pool or node status is over 3 minutes old. Start is paused until fresh data arrives.','El estado del pool o del nodo tiene más de 3 minutos. El inicio está en pausa hasta recibir datos recientes.'],
+    future:['The pool or node status has an inconsistent future timestamp. Retry after its clock is corrected.','El estado del pool o del nodo tiene una fecha futura incoherente. Reintenta cuando se corrija su reloj.'],
+    invalid:['The pool returned an invalid status timestamp. Start is paused; retry the status check.','El pool devolvió una fecha de estado no válida. El inicio está en pausa; reintenta la comprobación.'],
+    config:['The pool configuration does not match this ZCL miner and its 0.8% fee. Start is paused.','La configuración del pool no coincide con este minero ZCL y su comisión del 0,8%. El inicio está en pausa.'],
+    syncing:['The pool node is synchronizing or checking its chain. Start will become available when it is ready.','El nodo del pool está sincronizando o comprobando su cadena. El inicio estará disponible cuando esté listo.'],
+    paused:['The pool is temporarily not accepting miners. Its status will refresh automatically.','El pool no está aceptando mineros temporalmente. El estado se actualizará automáticamente.'],
+    timeout:['The pool status request timed out after 8 seconds. Check your connection and retry.','La consulta del estado del pool agotó el tiempo de espera de 8 segundos. Comprueba tu conexión y reintenta.'],
+    unavailable:['The pool status could not be loaded. Check your connection and retry.','El estado del pool no se pudo cargar. Comprueba tu conexión y reintenta.'],
+    cached:['The pool response is an old cached copy. Retry to request current status.','La respuesta del pool es una copia antigua en caché. Reintenta para solicitar el estado actual.']
+  };
+  return translations[reason]?.[es?1:0]||translations.unavailable[es?1:0];
+}
+function renderPoolStats(pool,node){
+  const number=value=>typeof value==='number'&&Number.isFinite(value)?value.toLocaleString(es?'es':'en',{maximumFractionDigits:2}):'—';
+  $('pool-block').textContent=number(node?.chain?.height);
+  $('pool-peers').textContent=number(node?.node?.connections);
+  $('pool-network-rate').textContent=typeof node?.mining?.networkSolps==='number'?number(node.mining.networkSolps)+' Sol/s':'—';
+  $('pool-fee').textContent=typeof pool?.feePercent==='number'?number(pool.feePercent)+'%':'—';
+  $('pool-minimum').textContent=typeof pool?.payoutMinimumZcl==='string'&&/^\d+(?:\.\d+)?$/.test(pool.payoutMinimumZcl)?pool.payoutMinimumZcl+' ZCL':'—';
+  const updated=Date.parse(pool?.generatedAt);
+  $('pool-updated').textContent=Number.isFinite(updated)?(es?'Datos del pool: ':'Pool data: ')+new Date(updated).toISOString().replace('T',' ').replace('.000Z',' UTC'):'—';
+}
+async function checkPool(){
+  if(checkingPool)return;
+  checkingPool=true;$('pool-retry').disabled=true;
+  const controller=new AbortController();let timer;
+  try{
+    const responses=Promise.all(['/api/pool.json','/api/node.json'].map(async url=>{
+      const response=await fetch(url,{cache:'no-store',signal:controller.signal});
+      if(!response.ok)throw new Error('unavailable');
+      return {response,value:await response.json()};
+    }));
+    const [poolResult,nodeResult]=await Promise.race([responses,new Promise((_,reject)=>{
+      timer=setTimeout(()=>{reject(new Error('timeout'));controller.abort();},8000);
+    })]);
+    const pool=poolResult.value,node=nodeResult.value,localNow=Date.now();
+    if(pool?.schemaVersion!==1||pool?.asset!=='ZCL'||node?.schemaVersion!==1||node?.asset!=='ZCL')throw new Error('config');
+    const poolTime=observedTime(poolResult.response,localNow),nodeTime=observedTime(nodeResult.response,localNow);
+    renderPoolStats(pool,node);
+    const skew=[poolTime,nodeTime].some(clock=>clock.server&&Math.abs(clock.now-localNow)>300000);
+    $('pool-clock').textContent=skew?(es?'El reloj de tu dispositivo difiere del servidor. Usamos la hora HTTPS del servidor para comprobar la actualidad de los datos.':'Your device clock differs from the server. Freshness is checked against the HTTPS server time.'):
+      !poolTime.server||!nodeTime.server?(es?'Hora del servidor no disponible; comprobamos la actualidad con el reloj de este dispositivo.':'Server time is unavailable; freshness is checked against this device’s clock.') : '';
+    const reason=observationProblem(pool?.generatedAt,poolTime.now)||observationProblem(node?.generatedAt,nodeTime.now)||
+      (pool?.feePercent!==0.8||node?.asset!=='ZCL'?'config':node?.node?.synced!==true?'syncing':pool?.acceptingMiners!==true?'paused':'ready');
+    poolOpen=reason==='ready';$('pool-readiness').textContent=poolMessage(reason);
+  }catch(error){
+    poolOpen=false;renderPoolStats(null,null);$('pool-clock').textContent='';
+    $('pool-readiness').textContent=poolMessage(error.message);
+  }finally{
+    clearTimeout(timer);controller.abort();checkingPool=false;$('pool-retry').disabled=false;
+    if(!worker)$('start').disabled=!poolOpen;
+  }
+}
+$('pool-retry').addEventListener('click',checkPool);
 checkPool();setInterval(()=>{if(!document.hidden)checkPool();},30000);
+window.addEventListener('online',checkPool);
 function stop(message){if(!worker)return;stopping=true;worker.postMessage({type:'stop'});status(message);finish();}
 $('stop').addEventListener('click',()=>stop(es?'Detenido. Tu GPU no está minando.':'Stopped. Your GPU is not mining.'));
-document.addEventListener('visibilitychange',()=>{if(document.hidden)stop(es?'Pestaña oculta: minería detenida.':'Tab hidden: mining stopped.');});
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stop(es?'Pestaña oculta: minería detenida.':'Tab hidden: mining stopped.');else checkPool();});
 window.addEventListener('pagehide',()=>{worker?.terminate();});
 $('mining-form').addEventListener('submit',event=>{
   event.preventDefault();if(worker||!poolOpen||!$('consent').checked)return;

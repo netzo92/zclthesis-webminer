@@ -116,6 +116,24 @@ for ZCL 192,7.
 
 ## Validation
 
+The English and Spanish miner pages show live block height, connected peers,
+network hashrate (not pool hashrate), fee and minimum payout above the form.
+Readiness requires matching version-1 ZCL status documents, the configured 0.8%
+fee, an accepting pool and a synchronized node. Each uncached status request has
+an eight-second timeout and a manual retry. A valid HTTPS response Date provides
+the freshness reference when the device clock differs; exports older than three
+minutes or over five minutes in the future still keep Start disabled. Without a
+server Date the page uses, and explicitly identifies, the device clock. Stale
+data, synchronization, maintenance, incompatible settings and request failures
+have separate messages. Retrying or returning to the tab never starts mining.
+
+The readiness update passed all 37 automated tests, including simulated device
+clock skew, stale exports despite a valid server clock, bad schemas, stalled
+requests and retry recovery. A read-only public WebSocket check on September 13,
+2026 (UTC) received session, authorization, target and a valid job with zero
+submitted shares and no GPU work. This check establishes work delivery, not
+mining performance or a payout.
+
 ```sh
 npm test
 python3 tests/verify-proof.py tests/zcl-mainnet-header.json

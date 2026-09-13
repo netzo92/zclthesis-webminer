@@ -5,6 +5,80 @@ import vm from 'node:vm';
 
 const app=await readFile(new URL('../public/app.mjs',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
+
+function readinessHarness({lang='en',localNow=Date.parse('2026-09-12T12:00:00Z'),serverDate,
+  age,exportOffset=0,edit=()=>{},hang=false}={}){
+  const elements=new Map(),listeners=new Map(),timers=[];
+  const getElementById=id=>{if(!elements.has(id))elements.set(id,{disabled:true,textContent:'',value:'',
+    addEventListener(type,fn){listeners.set(id+':'+type,fn);}});return elements.get(id);};
+  class Clock extends Date{static now(){return localNow;}}
+  const reference=serverDate?Date.parse(serverDate):localNow;
+  const pool={schemaVersion:1,asset:'ZCL',generatedAt:new Date(reference+exportOffset).toISOString(),
+    acceptingMiners:true,feePercent:0.8,payoutMinimumZcl:'0.05'};
+  const node={schemaVersion:1,asset:'ZCL',generatedAt:new Date(reference+exportOffset).toISOString(),
+    node:{synced:true,connections:5},chain:{height:3248574},mining:{networkSolps:11548}};
+  edit(pool,node);
+  const requests=[];
+  const harness={elements,listeners,timers,pool,node,requests,hang,get:getElementById};
+  vm.runInNewContext(app,{Date:Clock,AbortController,
+    document:{documentElement:{lang},getElementById,addEventListener(){}},window:{addEventListener(){}},
+    setInterval(){},clearInterval(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},
+    fetch:async(url,options)=>{requests.push(options);if(harness.hang)return new Promise(()=>{});
+      return {ok:true,headers:{get:name=>name==='date'?serverDate:name==='age'?age:null},json:async()=>url.includes('pool.json')?pool:node};},
+    Worker:class{constructor(){assert.fail('Status checks must never start GPU work');}}
+  });
+  return harness;
+}
+
+test('fresh HTTPS server time corrects device clock skew without accepting stale exports',async()=>{
+  const serverDate='Sat, 12 Sep 2026 12:00:00 GMT';
+  for(const lang of ['en','es'])for(const skew of [-86400000,86400000]){
+    const h=readinessHarness({lang,serverDate,localNow:Date.parse(serverDate)+skew});
+    await tick();assert.equal(h.get('start').disabled,false);
+    assert.match(h.get('pool-clock').textContent,lang==='en'?/device clock differs/:/reloj de tu dispositivo difiere/);
+    assert.equal(h.requests.every(x=>x.cache==='no-store'),true);
+    for(const exportOffset of [-180001,300001]){
+      const bad=readinessHarness({lang,serverDate,localNow:Date.parse(serverDate)+skew,exportOffset});
+      await tick();assert.equal(bad.get('start').disabled,true);
+      assert.doesNotMatch(bad.get('pool-readiness').textContent,/launch|lanzamiento/);
+    }
+  }
+});
+
+test('invalid schemas, assets, fees, synchronization and admission stay closed with specific reasons',async()=>{
+  for(const [edit,message] of [
+    [(p)=>{p.schemaVersion=2;},/configuration/],[(p)=>{p.asset='BTC';},/configuration/],
+    [(_,n)=>{delete n.schemaVersion;},/configuration/],[(_,n)=>{n.asset='ZEC';},/configuration/],
+    [(p)=>{p.feePercent=1;},/configuration/],[(_,n)=>{n.node.synced=false;},/synchronizing/],
+    [(p)=>{p.acceptingMiners=false;},/temporarily not accepting/]]){
+    const h=readinessHarness({edit});await tick();assert.equal(h.get('start').disabled,true);
+    assert.match(h.get('pool-readiness').textContent,message);
+  }
+  const staleCache=readinessHarness({serverDate:'Sat, 12 Sep 2026 12:00:00 GMT',age:'181'});
+  await tick();assert.equal(staleCache.get('start').disabled,true);assert.match(staleCache.get('pool-readiness').textContent,/cached/);
+});
+
+test('a stalled check times out after eight seconds and manual retry recovers without mining',async()=>{
+  const h=readinessHarness({hang:true});await tick();
+  assert.equal(h.timers[0].ms,8000);assert.equal(h.get('pool-retry').disabled,true);
+  h.timers[0].fn();await tick();
+  assert.equal(h.get('start').disabled,true);assert.equal(h.get('pool-retry').disabled,false);
+  assert.match(h.get('pool-readiness').textContent,/timed out after 8 seconds/);
+  assert.equal(h.requests.every(x=>x.signal.aborted),true);
+  h.hang=false;await h.listeners.get('pool-retry:click')();
+  assert.equal(h.get('start').disabled,false);assert.match(h.get('pool-readiness').textContent,/ready to accept/);
+  assert.equal(h.get('pool-network-rate').textContent,'11,548 Sol/s');
+  assert.equal(h.get('pool-minimum').textContent,'0.05 ZCL');
+});
+
+test('both pages place live stats above the mining form and version changed assets',async()=>{
+  for(const lang of ['en','es']){
+    const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
+    assert.ok(html.indexOf('id="pool-heading"')<html.indexOf('id="mining-form"'));
+    assert.match(html,/style\.css\?v=20260913-readiness/);assert.match(html,/app\.mjs\?v=20260913-readiness/);
+    assert.match(html,lang==='en'?/Network hashrate/:/Hashrate de la red/);
+  }
+});
 test('English and Spanish Start controls require fresh pool and node observations',async()=>{
   const now=Date.parse('2026-09-12T12:00:00Z');
   class Clock extends Date {static now(){return now;}}
@@ -12,21 +86,21 @@ test('English and Spanish Start controls require fresh pool and node observation
     for(const source of ['pool','node']) {
       for(const offset of [0,-180000,300000,-180001,300001,undefined,null,'invalid']) {
         const generatedAt=typeof offset==='number'?new Date(now+offset).toISOString():offset;
-        const pool={generatedAt:new Date(now).toISOString(),acceptingMiners:true,feePercent:0.8};
-        const node={generatedAt:new Date(now).toISOString(),asset:'ZCL',node:{synced:true}};
+        const pool={schemaVersion:1,asset:'ZCL',generatedAt:new Date(now).toISOString(),acceptingMiners:true,feePercent:0.8};
+        const node={schemaVersion:1,generatedAt:new Date(now).toISOString(),asset:'ZCL',node:{synced:true}};
         (source==='pool'?pool:node).generatedAt=generatedAt;
         const elements=new Map();
         const getElementById=id=>{if(!elements.has(id))elements.set(id,{disabled:true,addEventListener(){}});return elements.get(id);};
         vm.runInNewContext(app,{
           Date:Clock,document:{documentElement:{lang},getElementById,addEventListener(){}},
-          window:{addEventListener(){}},setInterval(){},clearInterval(){},
+          window:{addEventListener(){}},setInterval(){},clearInterval(){},setTimeout,clearTimeout,AbortController,
           fetch:async url=>({ok:true,json:async()=>url.includes('pool.json')?pool:node}),
           Worker:class {constructor(){assert.fail('Readiness check must never start GPU work');}},
         });
         await new Promise(resolve=>setImmediate(resolve));
         const fresh=typeof offset==='number'&&offset>=-180000&&offset<=300000;
         assert.equal(getElementById('start').disabled,!fresh,`${lang} ${source} timestamp ${offset}`);
-        assert.match(getElementById('pool-readiness').textContent,lang==='es'?/El pool/:/The pool/);
+        assert.match(getElementById('pool-readiness').textContent,/pool/);
       }
     }
   }
@@ -49,8 +123,8 @@ test('both language forms pass the explicit duration and preserve Stop and hidde
       addEventListener(type,handler){listeners.set('document:'+type,handler);}};
     vm.runInNewContext(app,{Date,document,navigator:{gpu:{}},Worker,
       window:{addEventListener(type,handler){listeners.set('window:'+type,handler);}},
-      setInterval(){},clearInterval(){},
-      fetch:async url=>({ok:true,json:async()=>({generatedAt:new Date().toISOString(),
+      setInterval(){},clearInterval(){},setTimeout,clearTimeout,AbortController,
+      fetch:async url=>({ok:true,json:async()=>({schemaVersion:1,asset:'ZCL',generatedAt:new Date().toISOString(),
         ...(url.includes('pool.json')?{acceptingMiners:true,feePercent:0.8}:{asset:'ZCL',node:{synced:true}})})}),
     });
     await tick();assert.equal(workers.length,0);
