@@ -226,3 +226,17 @@ recomputes a fixed old header and does not contact the live network.
 
 See [third-party notices](THIRD_PARTY_NOTICES.md) for the MIT-licensed solver
 reference and attribution.
+
+The live earnings dashboard was published from `8ec2721` on September 13, 2026,
+using the pool's read-only API implementation `0302954`. All 46 Node tests and
+58 backend accounting checks passed. Live English/Spanish checks at 390 and
+1,440 pixels verified actual ledger values, payout progress, network shares,
+both chart tabs, observation selection and the automatic 30-second refresh.
+The checks ran in a separate headless browser with mining workers/connections
+blocked; neither was attempted. Existing browser sessions were left untouched.
+Live assets matched reviewed source and `public/app.mjs` stayed unchanged.
+
+The observed reward/available amounts were zero and the payout threshold was
+0.05 ZCL. These were genuine ledger observations, not demonstration balances.
+The page builds its chart from readings while open; it does not reconstruct
+earlier earnings or retain chart history after the page is closed.
