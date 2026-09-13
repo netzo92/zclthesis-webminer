@@ -43,6 +43,44 @@ jobs, with accepted work credited to the intended payout account. No mainnet
 block or payment occurred in the launch tests; see the
 [deployment record](https://github.com/netzo92/zclthesis-pool/blob/dev/docs/GCP-OPERATIONS.md#final-repaired-deployment-and-public-reopening).
 
+## Live reward dashboard
+
+`/mine/#earnings-dashboard` (and `/mine/es/#earnings-dashboard`) reads the
+selected public address from the existing payout field. Native miners can enter
+an address and inspect it without starting browser mining. The default blank
+field shows the approved pool donation address with an explicit no-payouts-to-you
+notice: its totals aggregate all donors and are never presented as this
+visitor’s personal earnings. Address changes discard the previous address’s
+figures and observations. Session work remains attributed to its original
+recipient until a new browser session begins.
+
+The read-only `/api/miner.json?address=...` response supplies retained credited
+rewards, immature rewards, mature rewards awaiting credit, paid amounts, and
+mature unreserved balance. Progress toward the 0.05 ZCL threshold uses only that
+available balance; already-reserved payouts appear separately. Reaching the
+threshold does not promise an immediate payment. Miner rewards are net of the
+pool fee; the pool’s recorded, last-day, and last-hour block totals are gross.
+Hashrate and network percentages are explicitly estimates from accepted work
+over five minutes (with a separate one-hour estimate) and a network observation
+over the last 120 blocks. Stale network observations cannot supply percentages.
+
+The SVG chart switches between timestamped credited-reward observations and the
+existing browser’s actual accepted-share counter. It retains at most 180 points
+from the last 90 minutes in memory, inserts no historical earnings, and breaks
+lines across observation gaps longer than 90 seconds. A single initial point
+is identified as such; zero rewards remain zero. A keyboard-accessible slider
+and exact-value table accompany the chart. An accepted-share pulse respects
+`prefers-reduced-motion`. Counter resets begin a new session series.
+
+Ledger polling runs every 30 seconds while visible. HTTPS Date compensates for
+device-clock skew. Failed refreshes retain timestamped previous observations;
+unavailable data renders dashes, while a successfully checked unseen address
+has an explicit no-recorded-activity label. Validation checks address binding,
+exact zatoshi amounts, reward conservation, available-balance progress, work
+ratios, and source freshness. The dashboard has no mining-control hooks: the
+existing consent, donation acknowledgment, Start, Stop, and hidden-tab behavior
+remain in `app.mjs`.
+
 ## Pool transport and deployment
 
 ```sh
