@@ -262,3 +262,10 @@ All 46 existing Node tests passed. Isolated English/Spanish browser checks at
 viewport bounds, block-count pluralization, partial/unavailable/invalid/stale
 fixtures, and unchanged unchecked mining consents. GPU workers and mining
 connections were blocked and none were attempted. `public/app.mjs` is unchanged.
+
+
+The tooltip/block-count release `ce5555d` is deployed to the pool VM without
+restarting mining services. Live verification on September 13 at 17:54–17:56 UTC
+passed both languages at 320 and 1,440 pixels, including hover, keyboard and touch
+help. All six checked assets matched source, including the unchanged mining
+controller. The live ledger reported zero pool blocks in all three windows.
