@@ -76,7 +76,7 @@ test('both pages place live stats above the mining form and version changed asse
   for(const lang of ['en','es']){
     const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
     assert.ok(html.indexOf('id="pool-heading"')<html.indexOf('id="mining-form"'));
-    assert.match(html,/style\.css\?v=20260913-address-warning/);assert.match(html,/app\.mjs\?v=20260913-address-warning/);
+    assert.match(html,/style\.css\?v=20260913-share-help/);assert.match(html,/app\.mjs\?v=20260913-address-warning/);
     assert.match(html,lang==='en'?/Network hashrate/:/Hashrate de la red/);
   }
 });

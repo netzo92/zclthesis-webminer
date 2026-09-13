@@ -41,6 +41,7 @@ const currentNow=()=>Date.now()+clockOffset;
 const old=data=>!isTime(data?.generatedAt)||currentNow()-Date.parse(data.generatedAt)>180000||currentNow()-Date.parse(data.generatedAt)<-300000;
 function clearFigures(){
  for(const key of ['credited','available','immature','miner-rate','pool-rate','miner-percent','pool-percent','pool-allTime','pool-last24h','pool-lastHour'])$(key).textContent='—';
+ for(const key of ['allTime','last24h','lastHour']){const node=$('pool-'+key+'-blocks');if(node)node.textContent=es?'— bloques':'— blocks';}
  for(const key of ['credited-detail','available-detail','immature-detail','remaining','miner-hour','pool-hour','network-note','updated'])$(key).textContent='';
  $('payout-progress').value=0;$('payout-progress').hidden=true;$('payout-progress').setAttribute('aria-valuetext',t.unavailable);
  $('pool-note').textContent=t.poolUnavailable;
@@ -67,6 +68,11 @@ function poolRewards(data){
  for(const key of ['allTime','last24h','lastHour']){
   const value=available?mined[key].rewardZat:null;
   $('pool-'+key).textContent=value!==null?mined.status==='partial'?(value==='0'?'—':'≥ '+z(value)):z(value):'—';
+  const count=available?mined[key].blocks:null;
+  const validCount=Number.isSafeInteger(count)&&count>=0;
+  const label=es?(count===1?'bloque':'bloques'):(count===1?'block':'blocks');
+  const display=validCount?(mined.status==='partial'?(count===0?'—':'≥ '+count.toLocaleString(locale)):count.toLocaleString(locale)):'—';
+  const node=$('pool-'+key+'-blocks');if(node)node.textContent=display+' '+label;
  }
  $('pool-note').textContent=available?[t.poolNote,mined.status==='partial'?t.poolPartial:'',old(mined)?t.poolStale:'',t.poolObserved+': '+time(mined.generatedAt)+'.'].filter(Boolean).join(' '):t.poolUnavailable;
 }
@@ -161,3 +167,36 @@ setInterval(()=>{if(!document.hidden){sampleWork();render();refresh();}},30000);
 document.addEventListener('visibilitychange',()=>{if(!document.hidden){render();refresh();}});
 window.addEventListener('pagehide',()=>{request?.abort();clearTimeout(editTimer);});
 }
+
+// On-demand explanations only; no mining, counter or payout actions.
+const shareHelp=[];
+for(const trigger of document.querySelectorAll('[data-share-help]')){
+ const tip=document.getElementById(trigger.getAttribute('aria-describedby'));
+ if(!tip)continue;
+ let pinned=false,hovered=false,leaveTimer;
+ const close=()=>{clearTimeout(leaveTimer);pinned=false;tip.hidden=true;trigger.setAttribute('aria-expanded','false');};
+ const position=()=>{
+  const rect=trigger.getBoundingClientRect(),width=tip.offsetWidth,height=tip.offsetHeight;
+  if(rect.bottom<0||rect.top>innerHeight){close();return;}
+  const left=Math.max(16,Math.min(rect.left,innerWidth-width-16));
+  const top=rect.bottom+8+height<=innerHeight-16?rect.bottom+8:Math.max(16,rect.top-height-8);
+  tip.style.left=left+'px';tip.style.top=top+'px';
+ };
+ const open=()=>{
+  clearTimeout(leaveTimer);for(const help of shareHelp)if(help.trigger!==trigger)help.close();
+  tip.hidden=false;trigger.setAttribute('aria-expanded','true');position();
+ };
+ const leave=()=>{hovered=false;leaveTimer=setTimeout(()=>{if(!hovered&&!pinned&&document.activeElement!==trigger)close();},120);};
+ for(const node of [trigger,tip]){
+  node.addEventListener('pointerenter',event=>{if(event.pointerType==='mouse'){hovered=true;open();}});
+  node.addEventListener('pointerleave',event=>{if(event.pointerType==='mouse')leave();});
+ }
+ trigger.addEventListener('focus',open);
+ trigger.addEventListener('blur',()=>{if(!hovered)close();});
+ trigger.addEventListener('click',()=>{if(pinned)close();else{pinned=true;open();}});
+ shareHelp.push({trigger,tip,close,position});
+}
+document.addEventListener('keydown',event=>{if(event.key==='Escape')for(const help of shareHelp)help.close();});
+document.addEventListener('pointerdown',event=>{for(const help of shareHelp)if(!help.trigger.contains(event.target)&&!help.tip.contains(event.target))help.close();});
+for(const event of ['resize','scroll'])window.addEventListener(event,()=>{for(const help of shareHelp)if(!help.tip.hidden)help.position();},event==='scroll');
+window.addEventListener('pagehide',()=>{for(const help of shareHelp)help.close();});

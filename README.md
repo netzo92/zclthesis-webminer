@@ -240,3 +240,25 @@ The observed reward/available amounts were zero and the payout threshold was
 0.05 ZCL. These were genuine ledger observations, not demonstration balances.
 The page builds its chart from readings while open; it does not reconstruct
 earlier earnings or retain chart history after the page is closed.
+
+
+## Accepted-share help and pool block counts
+
+English and Spanish explanations beside the accepted-work chart and session
+counter define an accepted share as pool-validated mining work. Its difficulty
+contributes to reward allocation for the selected payout address; acceptance
+alone does not establish a block or payment. The help opens on hover, keyboard
+focus or tap, supports hovering the explanation, and closes with Escape, a
+second tap or an outside tap. It does not announce each share or start mining.
+
+The miner dashboard also shows recorded block counts beside total, last-24-hour
+and last-hour ZCL rewards, using the existing read-only ledger response and
+30-second refresh. Partial positive counts are lower bounds; missing, malformed
+or unknown counts use dashes. Stale observations retain their timestamp and
+warning. Mature and immature canonical blocks are included in these counts.
+
+All 46 existing Node tests passed. Isolated English/Spanish browser checks at
+320 and 1,440 pixels verified tooltip mouse, keyboard and touch interactions,
+viewport bounds, block-count pluralization, partial/unavailable/invalid/stale
+fixtures, and unchanged unchecked mining consents. GPU workers and mining
+connections were blocked and none were attempted. `public/app.mjs` is unchanged.
