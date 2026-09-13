@@ -309,3 +309,25 @@ restarting mining services. Live verification on September 13 at 17:54–17:56 U
 passed both languages at 320 and 1,440 pixels, including hover, keyboard and touch
 help. All six checked assets matched source, including the unchanged mining
 controller. The live ledger reported zero pool blocks in all three windows.
+
+## September 13 treasury and projection publication
+
+Treasury UI `0c68135` and conditional chart `c806269` are live with pool backend
+`7328455` and `894d468`, respectively. The runtime webminer checkout was clean
+at `c806269b3ad5d4a94e35ffba2d8f8837f28d29c5`. Deployment did not restart mining
+services. Six chart/module assets matched the committed bytes, including the
+unchanged mining controller.
+
+The projection passed 920 read-only backend checks, 117 treasury regressions,
+58 miner-accounting regressions, all 50 frontend tests and independent review.
+The actual backend's synthetic JSON passed both frontend validators and both
+language renderers. Live English/Spanish checks at 320 and 1,440 pixels passed
+with GPU workers and mining sockets blocked, unchecked consent, no JavaScript
+errors and no horizontal overflow.
+
+The live observation at 18:20:39 UTC showed a conditional shared-address
+allocation of 0.3875 ZCL from a 0.390625 ZCL next-block subsidy, after the 0.8%
+pool fee. Credited rewards, available balance and confirmed treasury receipts
+were all zero, and no pool blocks were recorded. The browser displayed the
+same separation. This conditional amount is a dated scenario, not earned ZCL
+or a prediction of when a block will arrive.
