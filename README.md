@@ -161,6 +161,35 @@ isolated mock services. They do not mine or send money.
 The English and Spanish Start controls apply the same freshness bounds before
 allowing a visitor to begin a session.
 
+## Local performance display
+
+The English and Spanish session pages report **local verified proofs per second**
+separately from the pool API's five-minute difficulty-weighted accepted-work
+estimate. The local numerator is the solver's deduplicated, host-verified
+Equihash proofs before the pool share-target check. Completed nonces are not
+counted as solutions: one nonce may return zero, one, or several proofs.
+
+The denominator is monotonic elapsed time from the first solve through the latest
+completed solve. It includes canceled work and time between solves, and excludes
+connection and GPU/shader setup. Updates happen only when a solve completes;
+a stopped session retains its last observation. Last completed solve duration and
+the measured elapsed time are shown separately. A new session resets the rate;
+repeated or out-of-order attempt messages cannot increase the counters.
+
+The last completed solve also reports discarded rows/candidates when the fixed
+bucket or candidate capacity is exceeded. Missing overflow telemetry is labeled
+unavailable. Such loss can reduce valid proofs recovered; no loss rate or speedup
+is inferred without a measurement. This display does not change the solver,
+share target, pool/network estimates, payout logic, GPU scheduling, or lifecycle
+controls. A hidden tab still stops mining.
+
+The timing and UI tests use virtual clocks and mock workers: canceled-work time,
+setup exclusion, zero-proof solves, reset, deduplication, malformed timing,
+pre-target proof counts, late events from a stopped worker, and bilingual overflow
+messages. All 53 CPU and localhost-mock tests passed for this change. They do not
+execute GPU work. The historical finite results below remain the available hardware
+evidence, not a sustained-performance benchmark.
+
 ## Solver API
 
 ```js

@@ -55,9 +55,11 @@ export function createMinerController(options={}) {
           const nonce=env.crypto.getRandomValues(new Uint8Array(28));
           const header=makeHeader(work,session.noncePrefix,nonce);
           const abort=new AbortController();session.abort=abort;
-          const started=env.performanceNow();let previousProgress=0,proofs;
+          const started=env.performanceNow();session.solveStarted??=started;
+          let previousProgress=0,proofs,completion;
           try {
             proofs=await session.solver.solve(header,{signal:abort.signal,onProgress:progress=>{
+              if(progress.stage==='complete') completion=progress;
               if(session.active&&(env.performanceNow()-previousProgress>500||progress.stage==='complete')) {
                 send('progress',progress);previousProgress=env.performanceNow();
               }
@@ -67,7 +69,10 @@ export function createMinerController(options={}) {
             throw error;
           }
           if(!session.active) break;
-          send('attempt',{solutions:proofs.length,seconds:(env.performanceNow()-started)/1000});
+          const finished=env.performanceNow();
+          send('attempt',{id:++session.attemptId,solutions:proofs.length,seconds:(finished-started)/1000,
+            elapsedSeconds:(finished-session.solveStarted)/1000,
+            droppedRows:completion?.droppedRows??null,droppedCandidates:completion?.droppedCandidates??null});
           for(const proof of proofs) {
             if(!eligible(session,work)||abort.signal.aborted) break;
             const qualifies=await env.meetsTarget(header,proof,workTarget);
@@ -129,7 +134,7 @@ export function createMinerController(options={}) {
       if(!env.gpu) throw new Error('This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.');
       const unlimited=data.minutes==='unlimited',minutes=Number(data.minutes);
       if(!unlimited&&(!Number.isFinite(minutes)||minutes<1||minutes>60)) throw new Error('Choose a session from 1 to 60 minutes, or Until I stop.');
-      const session={active:true,deadline:unlimited?Infinity:env.now()+minutes*60000,tasks:new Set(),shareId:0};
+      const session={active:true,deadline:unlimited?Infinity:env.now()+minutes*60000,tasks:new Set(),shareId:0,attemptId:0};
       current=session;
       if(!unlimited) session.timer=env.setTimeout(()=>void stop(session,'Session time limit reached'),minutes*60000);
       send('status',{message:'Connecting to the pool'});

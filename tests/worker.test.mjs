@@ -22,8 +22,8 @@ function harness(overrides={}) {
     devices.push(device);return device;
   }};}};
   const makeSolver=async()=>{
-    const solver={disposed:0,async solve(header,{signal}) {
-      const work=deferred();work.header=header;work.signal=signal;solves.push(work);
+    const solver={disposed:0,async solve(header,{signal,onProgress}) {
+      const work=deferred();work.header=header;work.signal=signal;work.onProgress=onProgress;solves.push(work);
       signal.addEventListener('abort',()=>work.reject(signal.reason),{once:true});
       return work.promise;
     },dispose(){this.disposed++;assert(solves.every(work=>work.signal.aborted||work.finished));}};
@@ -168,4 +168,27 @@ test('only the exact fixed secure pool URL is allowed',async()=>{
     'wss://pool.zclthesis.com/ws?target=other','wss://user@pool.zclthesis.com/ws',
     'wss://pool.zclthesis.com/ws#other']) await h.controller({...start,endpoint});
   assert.equal(h.sockets.length,0);assert.equal(h.messages.filter(x=>x.type==='error').length,5);
+});
+
+
+test('local proof telemetry includes canceled-work elapsed time, excludes setup, and resets per session',async()=>{
+  const h=harness({createSolver:async()=>{h.advance(2000);return h.makeSolver();},meetsTarget:async()=>false});
+  const socket=await h.connect();
+  h.advance(3000);socket.receive({type:'job',params:params('2','ab')});await tick();
+  assert.equal(h.solves[0].signal.aborted,true);
+  h.advance(2000);
+  h.solves[1].onProgress({stage:'complete',droppedRows:4,droppedCandidates:2});
+  h.finish(h.solves[1],[new Uint8Array(400),new Uint8Array(400).fill(1)]);await tick();
+  assert.deepEqual(h.messages.filter(x=>x.type==='attempt'),[
+    {type:'attempt',id:1,solutions:2,seconds:2,elapsedSeconds:5,droppedRows:4,droppedCandidates:2},
+  ]);
+  assert.equal(socket.sent.filter(x=>x.type==='submit').length,0,'local proofs precede the pool target check');
+  h.advance(4000);h.finish(h.solves[2],[]);await tick();
+  assert.deepEqual(h.messages.filter(x=>x.type==='attempt').at(-1),
+    {type:'attempt',id:2,solutions:0,seconds:4,elapsedSeconds:9,droppedRows:null,droppedCandidates:null});
+  await h.controller({type:'stop'});await h.connect();h.advance(1000);
+  h.finish(h.solves.at(-1),[]);await tick();
+  assert.deepEqual(h.messages.filter(x=>x.type==='attempt').at(-1),
+    {type:'attempt',id:1,solutions:0,seconds:1,elapsedSeconds:1,droppedRows:null,droppedCandidates:null});
+  await h.controller({type:'stop'});
 });

@@ -2,6 +2,34 @@ const es=document.documentElement.lang==='es',$=id=>document.getElementById(id);
 let worker,ticker,started,stopping=false,poolOpen=false,checkingPool=false;
 const counts={solutions:0,submitted:0,accepted:0,rejected:0};
 const status=text=>$('status').textContent=text;
+let localPerformance={sequence:0,elapsed:0};
+const localNumber=value=>new Intl.NumberFormat(es?'es-ES':'en-US',{maximumSignificantDigits:4}).format(value);
+function resetLocalPerformance(){
+  localPerformance={sequence:0,elapsed:0};
+  for(const id of ['local-proof-rate','local-solve-seconds','local-measured-seconds'])$(id).textContent='—';
+  $('local-proof-observation').textContent=es?'Esperando la primera búsqueda completa.':'Waiting for the first completed solve.';
+  $('local-overflow').textContent='';$('local-overflow').hidden=true;
+}
+function recordLocalAttempt(data){
+  // Worker events are session-scoped. Repeated/old messages must not inflate proof counts.
+  if(!Number.isSafeInteger(data.id)||data.id<=localPerformance.sequence||
+     !Number.isSafeInteger(data.solutions)||data.solutions<0||data.solutions>4096||
+     !Number.isFinite(data.seconds)||data.seconds<=0||!Number.isFinite(data.elapsedSeconds)||
+     data.elapsedSeconds<data.seconds||data.elapsedSeconds<localPerformance.elapsed||
+     !Number.isSafeInteger(counts.solutions+data.solutions))return false;
+  localPerformance={sequence:data.id,elapsed:data.elapsedSeconds};
+  counts.solutions+=data.solutions;$('solutions').textContent=String(counts.solutions);
+  $('local-proof-rate').textContent=localNumber(counts.solutions/data.elapsedSeconds);
+  $('local-solve-seconds').textContent=localNumber(data.seconds)+' s';
+  $('local-measured-seconds').textContent=localNumber(data.elapsedSeconds)+' s';
+  $('local-proof-observation').textContent=es?'Última observación: búsqueda completa '+data.id+'.':'Last observation: completed solve '+data.id+'.';
+  const known=[data.droppedRows,data.droppedCandidates].every(value=>Number.isSafeInteger(value)&&value>=0);
+  $('local-overflow').hidden=known&&data.droppedRows===0&&data.droppedCandidates===0;
+  $('local-overflow').textContent=!known?(es?'No hay datos de desbordamiento para esta búsqueda.':'Overflow data is unavailable for this solve.'):
+    es?'Capacidad excedida en la última búsqueda: '+localNumber(data.droppedRows)+' filas y '+localNumber(data.droppedCandidates)+' candidatos descartados. Pueden perderse soluciones válidas.':
+       'Capacity exceeded in the last solve: '+localNumber(data.droppedRows)+' rows and '+localNumber(data.droppedCandidates)+' candidates discarded. Valid solutions may be lost.';
+  return true;
+}
 // The owner explicitly approved publishing this recipient for blank-address donations.
 const poolDonationAddress='t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d';
 function renderAddressWarning(){
@@ -113,13 +141,15 @@ $('mining-form').addEventListener('submit',event=>{
   const address=suppliedAddress||poolDonationAddress;
   if(!/^t1[1-9A-HJ-NP-Za-km-z]{33}$/.test(address)){status(es?'Introduce una dirección transparente ZCL válida.':'Enter a valid ZCL transparent address.');return;}
   if(!navigator.gpu){status(text('This browser does not support WebGPU. Try current Chrome or Edge with hardware acceleration.'));return;}
-  stopping=false;for(const key in counts){counts[key]=0;$(key).textContent='0';}
+  stopping=false;for(const key in counts){counts[key]=0;$(key).textContent='0';}resetLocalPerformance();
   $('address-line').textContent=(donating?(es?'Donación al pool; no recibirás pagos. Destino: ':'Donating to the pool; you receive no payouts. Destination: '):(es?'Dirección de pago: ':'Payout address: '))+address;
   started=Date.now();$('elapsed').textContent='0:00';ticker=setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);$('elapsed').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');},1000);
   $('start').disabled=true;$('stop').disabled=false;$('address').disabled=true;$('minutes').disabled=true;$('donation-consent').disabled=true;
-  worker=new Worker('/mine/src/miner-worker.mjs?v=20260912-unlimited',{type:'module'});
-  worker.onerror=()=>{status(es?'Error del minero; minería detenida.':'Miner error; mining stopped.');finish();};
+  worker=new Worker('/mine/src/miner-worker.mjs?v=20260914-local-performance',{type:'module'});
+  const sessionWorker=worker;
+  worker.onerror=()=>{if(worker!==sessionWorker)return;status(es?'Error del minero; minería detenida.':'Miner error; mining stopped.');finish();};
   worker.onmessage=({data})=>{
+    if(worker!==sessionWorker)return;
     if(data.type==='error'){status(text(data.message));stopping=true;finish();}
     else if(data.type==='stopped'){if(!stopping)status(text(data.message));finish();}
     else if(data.type==='status')status(text(data.message));
@@ -127,7 +157,7 @@ $('mining-form').addEventListener('submit',event=>{
     else if(data.type==='progress'){
       $('progress').value=data.total?data.completed/data.total:0;
       status(data.stage==='hash'?(es?'Calculando hashes en tu GPU…':'Computing hashes on your GPU…'):data.stage==='collision'?(es?'Ronda de colisión ':'Collision round ')+data.round+'/6':(es?'Comprobando soluciones…':'Checking solutions…'));
-    }else if(data.type==='attempt'){counts.solutions+=data.solutions;$('solutions').textContent=counts.solutions;}
+    }else if(data.type==='attempt'){recordLocalAttempt(data);}
     else if(data.type==='submitted'){$('submitted').textContent=++counts.submitted;}
     else if(data.type==='share'){const key=data.accepted?'accepted':'rejected';$(key).textContent=++counts[key];}
   };

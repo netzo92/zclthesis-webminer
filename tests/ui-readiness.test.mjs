@@ -21,13 +21,14 @@ function readinessHarness({lang='en',localNow=Date.parse('2026-09-12T12:00:00Z')
   edit(pool,node);
   const requests=[];
   const harness={elements,listeners,timers,pool,node,requests,hang,get:getElementById};
-  vm.runInNewContext(app,{Date:Clock,AbortController,
+  const context=vm.createContext({Date:Clock,AbortController,
     document:{documentElement:{lang},getElementById,addEventListener(){}},window:{addEventListener(){}},
     setInterval(){},clearInterval(){},setTimeout(fn,ms){timers.push({fn,ms});return timers.length;},clearTimeout(){},
     fetch:async(url,options)=>{requests.push(options);if(harness.hang)return new Promise(()=>{});
       return {ok:true,headers:{get:name=>name==='date'?serverDate:name==='age'?age:null},json:async()=>url.includes('pool.json')?pool:node};},
     Worker:class{constructor(){assert.fail('Status checks must never start GPU work');}}
   });
+  vm.runInContext(app,context);harness.context=context;
   return harness;
 }
 
@@ -76,7 +77,7 @@ test('both pages place live stats above the mining form and version changed asse
   for(const lang of ['en','es']){
     const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
     assert.ok(html.indexOf('id="pool-heading"')<html.indexOf('id="mining-form"'));
-    assert.match(html,/style\.css\?v=20260913-share-help/);assert.match(html,/app\.mjs\?v=20260913-address-warning/);
+    assert.match(html,/style\.css\?v=20260913-share-help/);assert.match(html,/app\.mjs\?v=20260914-local-performance/);
     assert.match(html,lang==='en'?/Network hashrate/:/Hashrate de la red/);
   }
 });
@@ -214,9 +215,63 @@ test('both language forms pass the explicit duration and preserve Stop and hidde
     assert.equal(getElementById('minutes').disabled,false);assert.equal(getElementById('stop').disabled,true);
     await tick();assert.equal(workers.length,1,'stopped sessions do not auto-restart');
     submit();assert.equal(workers.length,2);
+    const telemetry={type:'attempt',id:1,solutions:2,seconds:2,elapsedSeconds:5,droppedRows:0,droppedCandidates:0};
+    workers[0].onmessage({data:telemetry});
+    assert.equal(getElementById('solutions').textContent,'0','late events from a stopped worker cannot affect a new session');
+    workers[1].onmessage({data:telemetry});
+    assert.equal(getElementById('solutions').textContent,'2');
+    workers[1].onmessage({data:telemetry});
+    assert.equal(getElementById('solutions').textContent,'2','duplicate attempts cannot inflate the existing solution counter');
     document.hidden=true;listeners.get('document:visibilitychange')();
     assert.equal(workers[1].terminated,true);assert.equal(workers[1].messages.at(-1).type,'stop');
     document.hidden=false;listeners.get('document:visibilitychange')();
     assert.equal(workers.length,2,'returning to the tab does not auto-restart');
+  }
+});
+
+
+test('local proof rate uses elapsed seconds, includes zero-proof attempts, and ignores duplicate or invalid timing',async()=>{
+  for(const lang of ['en','es']){
+    const h=readinessHarness({lang});await tick();
+    const send=data=>{h.context.telemetry=data;return vm.runInContext('recordLocalAttempt(telemetry)',h.context);};
+    const first={id:1,solutions:2,seconds:2,elapsedSeconds:5,droppedRows:0,droppedCandidates:0};
+    assert.equal(send(first),true);
+    assert.equal(h.get('local-proof-rate').textContent,lang==='en'?'0.4':'0,4');
+    assert.equal(h.get('local-solve-seconds').textContent,'2 s');
+    assert.equal(h.get('local-measured-seconds').textContent,'5 s');
+    assert.equal(h.get('solutions').textContent,'2');
+    assert.equal(h.get('local-overflow').hidden,true);
+    assert.equal(send(first),false);
+    for(const invalid of [
+      {...first,id:2,seconds:0},{...first,id:2,seconds:Infinity},
+      {...first,id:2,elapsedSeconds:NaN},{...first,id:2,elapsedSeconds:4},
+      {...first,id:2,seconds:6},{...first,id:2,solutions:-1},
+    ])assert.equal(send(invalid),false);
+    assert.equal(h.get('solutions').textContent,'2');
+    assert.equal(send({...first,id:2,solutions:0,seconds:5,elapsedSeconds:10,droppedRows:7}),true);
+    assert.equal(h.get('local-proof-rate').textContent,lang==='en'?'0.2':'0,2');
+    assert.equal(h.get('solutions').textContent,'2');
+    assert.equal(h.get('local-overflow').hidden,false);
+    assert.match(h.get('local-overflow').textContent,lang==='en'?/7 rows/:/7 filas/);
+    assert.equal(h.get('pool-network-rate').textContent,lang==='en'?'11,548 Sol/s':'11.548 Sol/s','local telemetry never rewrites network math');
+    vm.runInContext('counts.solutions=0; resetLocalPerformance()',h.context);
+    assert.equal(h.get('local-proof-rate').textContent,'—');
+    assert.equal(h.get('local-overflow').hidden,true);
+    assert.equal(send({...first,solutions:0}),true,'a new session starts a fresh sequence and verified zero rate');
+    assert.equal(h.get('local-proof-rate').textContent,'0');
+    assert.equal(h.get('solutions').textContent,'0');
+    assert.equal(send({...first,id:2,droppedRows:null,droppedCandidates:null}),true);
+    assert.match(h.get('local-overflow').textContent,lang==='en'?/unavailable/:/No hay datos/);
+  }
+});
+
+test('both pages distinguish local verified proofs from pool accepted-work estimates and preserve timing scope',async()=>{
+  for(const lang of ['en','es']){
+    const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
+    for(const id of ['local-proof-rate','local-solve-seconds','local-measured-seconds','local-overflow'])
+      assert.equal((html.match(new RegExp('id="'+id+'"','g'))||[]).length,1);
+    assert.match(html,lang==='en'?/including canceled work/:/incluidos el trabajo cancelado/);
+    assert.match(html,lang==='en'?/connection and shader setup are excluded/:/excluye la conexión y la preparación de shaders/);
+    assert.match(html,lang==='en'?/proofs\/s/:/pruebas\/s/);
   }
 });
