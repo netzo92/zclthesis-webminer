@@ -1,5 +1,5 @@
 const es=document.documentElement.lang==='es',$=id=>document.getElementById(id);
-let worker,ticker,started,stopping=false,poolOpen=false,checkingPool=false;
+let worker,ticker,started,stopping=false,poolOpen=false,checkingPool=false,consentResetByAddress=false;
 const counts={solutions:0,submitted:0,accepted:0,rejected:0};
 const status=text=>$('status').textContent=text;
 let localPerformance={sequence:0,elapsed:0};
@@ -32,6 +32,21 @@ function recordLocalAttempt(data){
 }
 // The owner explicitly approved publishing this recipient for blank-address donations.
 const poolDonationAddress='t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d';
+function renderStartHint(){
+  const hintElement=$('start-hint');if(!hintElement)return;
+  const donating=!(typeof $('address').value==='string'&&$('address').value.trim());
+  const needsDonation=donating&&!$('donation-consent').checked,needsPower=!$('consent').checked;
+  if(worker){hintElement.textContent=es?'Pulsa Detener para finalizar esta sesión.':'Press Stop to end this session.';return;}
+  if(!needsDonation&&!needsPower)consentResetByAddress=false;
+  const reset=consentResetByAddress?(es?'La dirección ha cambiado; vuelve a dar tu consentimiento. ':'The payout address changed; please confirm your consent again. '):'';
+  const hint=needsDonation&&needsPower?
+    (es?'Antes de iniciar, marca la casilla de donación de arriba y la de GPU y electricidad.':'Before Start, check the donation box above and the GPU/electricity box.'):
+    needsDonation?(es?'Antes de iniciar, marca la casilla de donación de arriba.':'Before Start, check the donation box above.'):
+    needsPower?(es?'Antes de iniciar, marca la casilla de GPU y electricidad.':'Before Start, check the GPU/electricity box.'):
+    poolOpen?(es?'Consentimientos completos. Pulsa Iniciar para empezar.':'Consents complete. Press Start to begin.'):
+    (es?'Consentimientos completos. Podrás iniciar cuando el pool esté listo.':'Consents complete. Start becomes available when the pool is ready.');
+  hintElement.textContent=reset+hint;
+}
 function renderAddressWarning(){
   const donating=!(typeof $('address').value==='string'&&$('address').value.trim());
   $('address-warning').hidden=!donating;
@@ -39,10 +54,13 @@ function renderAddressWarning(){
   $('donation-consent').required=donating;
   $('donation-consent').disabled=!!worker||!donating;
   $('start').textContent=donating?(es?'Iniciar minería como donación':'Start donation mining'):(es?'Iniciar minería':'Start mining');
+  renderStartHint();
 }
 $('address').addEventListener('input',()=>{
+  consentResetByAddress=consentResetByAddress||!!$('consent').checked||!!$('donation-consent').checked;
   $('donation-consent').checked=false;$('consent').checked=false;renderAddressWarning();
 });
+for(const id of ['consent','donation-consent'])$(id).addEventListener('change',renderStartHint);
 renderAddressWarning();
 const messages={
   'Connecting to the pool':'Conectando al pool','Preparing GPU memory and shaders':'Preparando la memoria GPU y los shaders',
@@ -125,6 +143,7 @@ async function checkPool(){
   }finally{
     clearTimeout(timer);controller.abort();checkingPool=false;$('pool-retry').disabled=false;
     if(!worker)$('start').disabled=!poolOpen;
+    renderStartHint();
   }
 }
 $('pool-retry').addEventListener('click',checkPool);
@@ -146,6 +165,7 @@ $('mining-form').addEventListener('submit',event=>{
   started=Date.now();$('elapsed').textContent='0:00';ticker=setInterval(()=>{const s=Math.floor((Date.now()-started)/1000);$('elapsed').textContent=Math.floor(s/60)+':'+String(s%60).padStart(2,'0');},1000);
   $('start').disabled=true;$('stop').disabled=false;$('address').disabled=true;$('minutes').disabled=true;$('donation-consent').disabled=true;
   worker=new Worker('/mine/src/miner-worker.mjs?v=20260914-local-performance',{type:'module'});
+  renderStartHint();
   const sessionWorker=worker;
   worker.onerror=()=>{if(worker!==sessionWorker)return;status(es?'Error del minero; minería detenida.':'Miner error; mining stopped.');finish();};
   worker.onmessage=({data})=>{

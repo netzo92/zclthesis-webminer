@@ -371,3 +371,25 @@ Stop, no JavaScript errors, no horizontal overflow and no mining workers or
 sockets. Local browser fixtures rendered synthetic rate/timing/overflow events.
 The 53 CPU/mock tests and independent source review establish this display's
 behavior; no new GPU benchmark, mining, throughput gain or payout was observed.
+
+## Start consent guidance
+
+The English and Spanish forms show a persistent live hint immediately above
+Start, linked to the button with `aria-describedby`. It names any missing
+donation and GPU/electricity acknowledgments and explains when editing the
+payout address clears existing consent. Checking a box updates the hint;
+complete consent still requires explicit Start and current pool readiness.
+Native required-checkbox validation, donation consent and existing readiness
+gates remain enforced. The hint never checks a box or starts mining.
+Both HTML imports use `app.mjs?v=20260914-start-hint`; the worker version is
+unchanged. Cached older HTML without the hint element remains compatible.
+
+Focused checks use the existing mock readiness harness. Isolated browser
+validation replaces Worker and WebSocket with inert stubs and blocks mining
+requests; it verifies form validation and both language displays without GPU
+work or a pool connection.
+
+Validation: all 55 CPU/mock tests passed, including old-HTML compatibility.
+Isolated English and Spanish browser fixtures passed at 320px and 1440px,
+including missing consent, address resets and a closed pool. No JavaScript
+errors, horizontal overflow, real GPU workers or mining sockets were observed.

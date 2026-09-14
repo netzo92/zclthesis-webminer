@@ -8,9 +8,9 @@ const app=await readFile(new URL('../public/app.mjs',import.meta.url),'utf8');
 const tick=()=>new Promise(resolve=>setImmediate(resolve));
 
 function readinessHarness({lang='en',localNow=Date.parse('2026-09-12T12:00:00Z'),serverDate,
-  age,exportOffset=0,edit=()=>{},hang=false}={}){
+  age,exportOffset=0,edit=()=>{},hang=false,missingStartHint=false}={}){
   const elements=new Map(),listeners=new Map(),timers=[];
-  const getElementById=id=>{if(!elements.has(id))elements.set(id,{disabled:true,textContent:'',value:'',
+  const getElementById=id=>{if(missingStartHint&&id==='start-hint')return null;if(!elements.has(id))elements.set(id,{disabled:true,textContent:'',value:'',
     addEventListener(type,fn){listeners.set(id+':'+type,fn);}});return elements.get(id);};
   class Clock extends Date{static now(){return localNow;}}
   const reference=serverDate?Date.parse(serverDate):localNow;
@@ -77,7 +77,7 @@ test('both pages place live stats above the mining form and version changed asse
   for(const lang of ['en','es']){
     const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
     assert.ok(html.indexOf('id="pool-heading"')<html.indexOf('id="mining-form"'));
-    assert.match(html,/style\.css\?v=20260913-share-help/);assert.match(html,/app\.mjs\?v=20260914-local-performance/);
+    assert.match(html,/style\.css\?v=20260913-share-help/);assert.match(html,/app\.mjs\?v=20260914-start-hint/);
     assert.match(html,lang==='en'?/Network hashrate/:/Hashrate de la red/);
   }
 });
@@ -100,6 +100,54 @@ test('empty payout warnings follow the address field and require a fresh donatio
     assert.match(html,lang==='en'?/NO ADDRESS ENTERED — DONATE TO POOL/:/SIN DIRECCIÓN — DONAR AL POOL/);
     assert.match(html,lang==='en'?/You will receive no mining payouts/:/No recibirás pagos de minería/);
     assert.match(html,/<code id="donation-address">t1Q8PRCDso9HoK36XeLCPym6vZmkwyNgS4d<\/code>/);
+  }
+});
+
+test('the Start hint names missing consents, explains address resets, and preserves readiness gates',async()=>{
+  for(const lang of ['en','es']){
+    const h=readinessHarness({lang});await tick();
+    const hint=()=>h.get('start-hint').textContent;
+    const change=(id,checked)=>{h.get(id).checked=checked;h.listeners.get(id+':change')();};
+    assert.match(hint(),lang==='en'?/donation box above and the GPU\/electricity box/:/donación de arriba y la de GPU y electricidad/);
+    change('consent',true);
+    assert.match(hint(),lang==='en'?/^Before Start, check the donation box above\.$/:/^Antes de iniciar, marca la casilla de donación de arriba\.$/);
+    change('donation-consent',true);change('consent',false);
+    assert.match(hint(),lang==='en'?/^Before Start, check the GPU\/electricity box\.$/:/^Antes de iniciar, marca la casilla de GPU y electricidad\.$/);
+    change('consent',true);
+    assert.match(hint(),lang==='en'?/Consents complete\. Press Start/:/Consentimientos completos\. Pulsa Iniciar/);
+    assert.equal(h.get('stop').disabled,true,'consent changes do not start mining');
+    h.get('address').value='t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs';h.listeners.get('address:input')();
+    assert.match(hint(),lang==='en'?/address changed; please confirm your consent again/:/dirección ha cambiado; vuelve a dar tu consentimiento/);
+    assert.match(hint(),lang==='en'?/GPU\/electricity box/:/casilla de GPU y electricidad/);
+    assert.equal(h.get('consent').checked,false);assert.equal(h.get('donation-consent').checked,false);
+    assert.equal(h.get('donation-consent').required,false);
+    change('consent',true);
+    assert.match(hint(),lang==='en'?/^Consents complete/:/^Consentimientos completos/);
+    change('consent',false);
+    assert.doesNotMatch(hint(),lang==='en'?/address changed/:/dirección ha cambiado/,'resolved address-reset notice does not linger');
+    const paused=readinessHarness({lang,edit:pool=>{pool.acceptingMiners=false;}});await tick();
+    for(const id of ['consent','donation-consent']){paused.get(id).checked=true;paused.listeners.get(id+':change')();}
+    assert.equal(paused.get('start').disabled,true,'complete consent cannot open a closed pool');
+    assert.match(paused.get('start-hint').textContent,lang==='en'?/when the pool is ready/:/cuando el pool esté listo/);
+    assert.match(paused.get('pool-readiness').textContent,lang==='en'?/temporarily not accepting/:/no está aceptando/);
+    const html=await readFile(new URL(lang==='en'?'../public/index.html':'../public/es/index.html',import.meta.url),'utf8');
+    assert.match(html,/<p id="start-hint"[^>]*role="status"[^>]*aria-live="polite"[^>]*aria-atomic="true">[^<]+<\/p><button id="start"/);
+    assert.match(html,/<button id="start"[^>]*aria-describedby="start-hint pool-readiness"/);
+    assert.match(html,/<input id="consent" type="checkbox" required>/);
+    assert.match(html,/<input id="donation-consent" type="checkbox" required>/);
+  }
+});
+
+test('cached pages without the new hint keep readiness and consent behavior',async()=>{
+  for(const lang of ['en','es']){
+    const h=readinessHarness({lang,missingStartHint:true});await tick();
+    assert.equal(h.get('start').disabled,false);
+    h.get('consent').checked=true;h.listeners.get('consent:change')();
+    h.get('address').value='t1UYsZVJkLPeMjxEtACvSxfWuNmddpWfxzs';h.listeners.get('address:input')();
+    assert.equal(h.get('consent').checked,false);
+    assert.equal(h.get('donation-consent').required,false);
+    h.pool.acceptingMiners=false;await h.listeners.get('pool-retry:click')();
+    assert.equal(h.get('start').disabled,true);
   }
 });
 
