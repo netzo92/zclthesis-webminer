@@ -360,3 +360,14 @@ pool fee. Credited rewards, available balance and confirmed treasury receipts
 were all zero, and no pool blocks were recorded. The browser displayed the
 same separation. This conditional amount is a dated scenario, not earned ZCL
 or a prediction of when a block will arrive.
+
+## September 14 performance display publication
+
+Telemetry release `64d85b6` was installed by a clean fast-forward from `c806269`
+without restarting mining services. The English and Spanish HTML, controller and
+worker assets matched committed bytes over HTTPS. Both languages passed isolated
+live browser checks at 320 and 1,440 pixels, with unchecked consents, disabled
+Stop, no JavaScript errors, no horizontal overflow and no mining workers or
+sockets. Local browser fixtures rendered synthetic rate/timing/overflow events.
+The 53 CPU/mock tests and independent source review establish this display's
+behavior; no new GPU benchmark, mining, throughput gain or payout was observed.
